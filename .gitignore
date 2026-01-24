@@ -1,0 +1,48 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### --- DODATNA BEZBEDNOST (OVO JE NOVO) --- ###
+# Blokiramo sve vrste kljuceva i sertifikata
+# Ovo ce sakriti tvoj keywords.p12 u resources folderu
+*.p12
+*.jks
+*.key
+*.pem
+*.crt
+*.csr
+*.keystore
+*.der
+
+# Blokiramo logove
+*.log
