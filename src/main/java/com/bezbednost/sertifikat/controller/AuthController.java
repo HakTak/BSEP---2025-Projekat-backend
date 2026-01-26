@@ -47,7 +47,7 @@ public class AuthController {
     }
     
     // CHECK PASSWORD STRENGTH
-    @PostMapping("/check-password-strength")
+    @PostMapping("/checkPasswordStrength")
     public ResponseEntity<PasswordStrengthResponse> checkPasswordStrength(@RequestBody Map<String, String> request) {
         String password = request.get("password");
         if (password == null || password.isEmpty()) {
@@ -78,14 +78,14 @@ public class AuthController {
     }
     
     // READ - Pronađi sve korisnike
-    @GetMapping
+    @GetMapping("/allUsers")
     public ResponseEntity<List<UserResponse>> getAllUsers() {
         List<UserResponse> response = userService.getAllUsers();
         return new ResponseEntity<>(response, HttpStatus.OK);
     }
     
     // UPDATE - Ažuriraj korisnika
-    @PutMapping("/{id}")
+    @PutMapping("update/{id}")
     public ResponseEntity<UserResponse> updateUser(@PathVariable Long id, @Valid @RequestBody UpdateUserRequest request) {
         UserResponse response = userService.updateUser(id, request);
         return new ResponseEntity<>(response, HttpStatus.OK);
