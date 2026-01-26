@@ -1,5 +1,6 @@
 package com.bezbednost.sertifikat.service;
 
+import com.bezbednost.sertifikat.dto.PasswordStrengthResponse;
 import com.bezbednost.sertifikat.dto.RegisterRequest;
 import com.bezbednost.sertifikat.dto.RegisterResponse;
 import com.bezbednost.sertifikat.dto.UpdateUserRequest;
@@ -7,6 +8,8 @@ import com.bezbednost.sertifikat.dto.UserResponse;
 import com.bezbednost.sertifikat.entity.User;
 import com.bezbednost.sertifikat.entity.UserRole;
 import com.bezbednost.sertifikat.repository.UserRepository;
+import com.bezbednost.sertifikat.validator.PasswordStrengthValidator;
+import com.bezbednost.sertifikat.validator.PasswordStrengthResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,17 @@ public class UserService {
             throw new IllegalArgumentException("Lozinke se ne poklapaju");
         }
         
+        // Validacija jačine lozinke
+        PasswordStrengthValidator validator = PasswordStrengthValidator.builder()
+                .password(request.getPassword())
+                .build();
+        PasswordStrengthResult validationResult = validator.validateBasic();
+        
+        if (!validationResult.getValid()) {
+            String errors = String.join(", ", validationResult.getErrors());
+            throw new IllegalArgumentException("Lozinka nije dovoljno jaka: " + errors);
+        }
+        
         // Validacija da email nije već registrovan
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("Email je već registrovan");
@@ -49,6 +63,20 @@ public class UserService {
         userRepository.save(user);
         
         return new RegisterResponse("Registracija uspešna", request.getEmail());
+    }
+    
+    // Provera jačine lozinke
+    public PasswordStrengthResponse checkPasswordStrength(String password) {
+        PasswordStrengthValidator validator = PasswordStrengthValidator.builder()
+                .password(password)
+                .build();
+        PasswordStrengthResult result = validator.validate();
+        
+        return PasswordStrengthResponse.builder()
+                .valid(result.getValid())
+                .strength(result.getStrength())
+                .errors(result.getErrors())
+                .build();
     }
     
     // READ - Pronađi korisnika po ID-u

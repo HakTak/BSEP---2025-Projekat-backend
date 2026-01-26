@@ -1,5 +1,6 @@
 package com.bezbednost.sertifikat.controller;
 
+import com.bezbednost.sertifikat.dto.PasswordStrengthResponse;
 import com.bezbednost.sertifikat.dto.RegisterRequest;
 import com.bezbednost.sertifikat.dto.RegisterResponse;
 import com.bezbednost.sertifikat.dto.UpdateUserRequest;
@@ -11,7 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -26,6 +29,23 @@ public class AuthController {
     public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
         RegisterResponse response = userService.register(request);
         return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+    
+    // CHECK PASSWORD STRENGTH
+    @PostMapping("/check-password-strength")
+    public ResponseEntity<PasswordStrengthResponse> checkPasswordStrength(@RequestBody Map<String, String> request) {
+        String password = request.get("password");
+        if (password == null || password.isEmpty()) {
+            return new ResponseEntity<>(
+                    PasswordStrengthResponse.builder()
+                            .valid(false)
+                            .errors(List.of("Lozinka ne sme biti prazna"))
+                            .build(),
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+        PasswordStrengthResponse response = userService.checkPasswordStrength(password);
+        return new ResponseEntity<>(response, HttpStatus.OK);
     }
     
     // READ - Pronađi korisnika po ID-u
@@ -43,14 +63,14 @@ public class AuthController {
     }
     
     // READ - Pronađi sve korisnike
-    @GetMapping("/allUsers")
+    @GetMapping
     public ResponseEntity<List<UserResponse>> getAllUsers() {
         List<UserResponse> response = userService.getAllUsers();
         return new ResponseEntity<>(response, HttpStatus.OK);
     }
     
     // UPDATE - Ažuriraj korisnika
-    @PutMapping("update/{id}")
+    @PutMapping("/{id}")
     public ResponseEntity<UserResponse> updateUser(@PathVariable Long id, @Valid @RequestBody UpdateUserRequest request) {
         UserResponse response = userService.updateUser(id, request);
         return new ResponseEntity<>(response, HttpStatus.OK);
