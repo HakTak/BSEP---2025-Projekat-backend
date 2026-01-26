@@ -2,11 +2,12 @@ package com.bezbednost.sertifikat.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -35,6 +36,7 @@ public class SecurityConfig {
 
                 // 4. AUTORIZACIJA PUTANJA (Zamena za configure(HttpSecurity) i configure(WebSecurity))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/auth/register", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .anyRequest().permitAll()
                 )
 
@@ -46,6 +48,11 @@ public class SecurityConfig {
         return http.build();
     }
 
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
     // Definicija CORS-a (Zamena za CorsConfig klasu iz vežbi)
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
@@ -53,7 +60,7 @@ public class SecurityConfig {
 
         // Dozvoljavamo tvoj React frontend (Vite port)
         // NAPOMENA: Ako ti React radi na HTTP (ne HTTPS), promeni u "http://localhost:5173"
-        configuration.setAllowedOrigins(List.of("https://localhost:5173"));
+        configuration.setAllowedOrigins(List.of("http://localhost:5173", "https://localhost:5173"));
 
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
