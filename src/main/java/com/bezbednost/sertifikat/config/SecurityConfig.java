@@ -36,7 +36,7 @@ public class SecurityConfig {
 
                 // 4. AUTORIZACIJA PUTANJA (Zamena za configure(HttpSecurity) i configure(WebSecurity))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .anyRequest().permitAll()
                 )
 

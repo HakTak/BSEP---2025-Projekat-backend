@@ -31,6 +31,21 @@ public class AuthController {
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
     
+    // ACTIVATE - Aktivacija naloga
+    @PostMapping("/activate")
+    public ResponseEntity<Map<String, String>> activate(@RequestParam String token) {
+        try {
+            userService.activateAccount(token);
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Nalog je uspešno aktiviran! Sada možete da se ulogujete.");
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("error", e.getMessage());
+            return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+        }
+    }
+    
     // CHECK PASSWORD STRENGTH
     @PostMapping("/check-password-strength")
     public ResponseEntity<PasswordStrengthResponse> checkPasswordStrength(@RequestBody Map<String, String> request) {

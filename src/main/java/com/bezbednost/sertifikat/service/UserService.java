@@ -5,16 +5,21 @@ import com.bezbednost.sertifikat.dto.RegisterRequest;
 import com.bezbednost.sertifikat.dto.RegisterResponse;
 import com.bezbednost.sertifikat.dto.UpdateUserRequest;
 import com.bezbednost.sertifikat.dto.UserResponse;
+import com.bezbednost.sertifikat.entity.ActivationToken;
 import com.bezbednost.sertifikat.entity.User;
 import com.bezbednost.sertifikat.entity.UserRole;
+import com.bezbednost.sertifikat.repository.ActivationTokenRepository;
 import com.bezbednost.sertifikat.repository.UserRepository;
 import com.bezbednost.sertifikat.validator.PasswordStrengthValidator;
 import com.bezbednost.sertifikat.validator.PasswordStrengthResult;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -24,9 +29,18 @@ public class UserService {
     private UserRepository userRepository;
     
     @Autowired
+    private ActivationTokenRepository activationTokenRepository;
+    
+    @Autowired
     private PasswordEncoder passwordEncoder;
     
-    // CREATE - Registracija
+    @Autowired
+    private EmailService emailService;
+    
+    @Value("${app.activation.token.expiry}")
+    private long tokenExpiryTime;
+    
+    // CREATE - Registracija sa email aktivacijom
     public RegisterResponse register(RegisterRequest request) {
         // Validacija da su lozinke iste
         if (!request.getPassword().equals(request.getConfirmPassword())) {
@@ -49,7 +63,7 @@ public class UserService {
             throw new IllegalArgumentException("Email je već registrovan");
         }
         
-        // Kreiramo novog korisnika
+        // Kreiramo novog korisnika sa enabled = false
         User user = User.builder()
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
@@ -57,12 +71,57 @@ public class UserService {
                 .lastName(request.getLastName())
                 .organization(request.getOrganization())
                 .role(UserRole.USER)
-                .enabled(true)
+                .enabled(false) // Nalog nije aktivan dok se ne aktivira kroz email
                 .build();
         
         userRepository.save(user);
         
-        return new RegisterResponse("Registracija uspešna", request.getEmail());
+        // Kreiramo aktivacioni token
+        String activationTokenStr = UUID.randomUUID().toString();
+        ActivationToken activationToken = ActivationToken.builder()
+                .token(activationTokenStr)
+                .user(user)
+                .expiryDate(LocalDateTime.now().plusSeconds(tokenExpiryTime / 1000))
+                .used(false)
+                .build();
+        
+        activationTokenRepository.save(activationToken);
+        
+        // Slanje aktivacionog emaila
+        try {
+            emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
+        } catch (Exception e) {
+            userRepository.delete(user);
+            throw new RuntimeException("Greška pri slanju aktivacionog emaila. Pokušajte ponovo.");
+        }
+        
+        return new RegisterResponse("Registracija uspešna! Proverite email za aktivacioni link.", request.getEmail());
+    }
+    
+    // Aktivacija naloga preko tokena
+    public void activateAccount(String token) {
+        ActivationToken activationToken = activationTokenRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("Nevalidan aktivacioni token"));
+        
+        // Provera da li je token već korišten
+        if (activationToken.getUsed()) {
+            throw new IllegalArgumentException("Token je već korišten");
+        }
+        
+        // Provera da li je token istekao
+        if (LocalDateTime.now().isAfter(activationToken.getExpiryDate())) {
+            throw new IllegalArgumentException("Aktivacioni token je istekao");
+        }
+        
+        // Aktiviramo nalog
+        User user = activationToken.getUser();
+        user.setEnabled(true);
+        userRepository.save(user);
+        
+        // Označavamo token kao korišten
+        activationToken.setUsed(true);
+        activationToken.setUsedAt(LocalDateTime.now());
+        activationTokenRepository.save(activationToken);
     }
     
     // Provera jačine lozinke
