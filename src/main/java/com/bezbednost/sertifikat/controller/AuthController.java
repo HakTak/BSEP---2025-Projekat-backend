@@ -1,8 +1,10 @@
 package com.bezbednost.sertifikat.controller;
 
+import com.bezbednost.sertifikat.dto.ForgotPasswordRequest;
 import com.bezbednost.sertifikat.dto.PasswordStrengthResponse;
 import com.bezbednost.sertifikat.dto.RegisterRequest;
 import com.bezbednost.sertifikat.dto.RegisterResponse;
+import com.bezbednost.sertifikat.dto.ResetPasswordRequest;
 import com.bezbednost.sertifikat.dto.UpdateUserRequest;
 import com.bezbednost.sertifikat.dto.UserResponse;
 import com.bezbednost.sertifikat.service.UserService;
@@ -38,6 +40,36 @@ public class AuthController {
             userService.activateAccount(token);
             Map<String, String> response = new HashMap<>();
             response.put("message", "Nalog je uspešno aktiviran! Sada možete da se ulogujete.");
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("error", e.getMessage());
+            return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+        }
+    }
+    
+    // FORGOT PASSWORD - Zahtev za reset
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        try {
+            userService.forgotPassword(request);
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Email za oporavak lozinke je poslat na vašu email adresu. Molimo proverite email.");
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("error", e.getMessage());
+            return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+        }
+    }
+    
+    // RESET PASSWORD - Resetovanje lozinke
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        try {
+            userService.resetPassword(request);
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Lozinka je uspešno resetovana! Sada možete da se ulogujete sa novom lozinkom.");
             return new ResponseEntity<>(response, HttpStatus.OK);
         } catch (IllegalArgumentException e) {
             Map<String, String> response = new HashMap<>();

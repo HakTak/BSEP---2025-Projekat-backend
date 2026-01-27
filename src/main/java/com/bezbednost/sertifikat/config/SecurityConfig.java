@@ -36,7 +36,7 @@ public class SecurityConfig {
 
                 // 4. AUTORIZACIJA PUTANJA (Zamena za configure(HttpSecurity) i configure(WebSecurity))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers("/api/auth/register", "/api/auth/activate", "/api/auth/forgot-password", "/api/auth/reset-password", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .anyRequest().permitAll()
                 )
 
@@ -61,7 +61,6 @@ public class SecurityConfig {
         // Dozvoljavamo tvoj React frontend (Vite port)
         // NAPOMENA: Ako ti React radi na HTTP (ne HTTPS), promeni u "http://localhost:5173"
         configuration.setAllowedOrigins(List.of("http://localhost:5173", "https://localhost:5173"));
-
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
         configuration.setAllowCredentials(true); // Ako šalješ kolačiće ili Auth header

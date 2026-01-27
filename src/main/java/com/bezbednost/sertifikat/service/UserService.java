@@ -1,14 +1,18 @@
 package com.bezbednost.sertifikat.service;
 
+import com.bezbednost.sertifikat.dto.ForgotPasswordRequest;
 import com.bezbednost.sertifikat.dto.PasswordStrengthResponse;
 import com.bezbednost.sertifikat.dto.RegisterRequest;
 import com.bezbednost.sertifikat.dto.RegisterResponse;
+import com.bezbednost.sertifikat.dto.ResetPasswordRequest;
 import com.bezbednost.sertifikat.dto.UpdateUserRequest;
 import com.bezbednost.sertifikat.dto.UserResponse;
 import com.bezbednost.sertifikat.entity.ActivationToken;
+import com.bezbednost.sertifikat.entity.PasswordResetToken;
 import com.bezbednost.sertifikat.entity.User;
 import com.bezbednost.sertifikat.entity.UserRole;
 import com.bezbednost.sertifikat.repository.ActivationTokenRepository;
+import com.bezbednost.sertifikat.repository.PasswordResetTokenRepository;
 import com.bezbednost.sertifikat.repository.UserRepository;
 import com.bezbednost.sertifikat.validator.PasswordStrengthValidator;
 import com.bezbednost.sertifikat.validator.PasswordStrengthResult;
@@ -30,6 +34,9 @@ public class UserService {
     
     @Autowired
     private ActivationTokenRepository activationTokenRepository;
+    
+    @Autowired
+    private PasswordResetTokenRepository passwordResetTokenRepository;
     
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -122,6 +129,76 @@ public class UserService {
         activationToken.setUsed(true);
         activationToken.setUsedAt(LocalDateTime.now());
         activationTokenRepository.save(activationToken);
+    }
+    
+    // FORGOT PASSWORD - Zahtev za reset lozinke
+    public void forgotPassword(ForgotPasswordRequest request) {
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new IllegalArgumentException("Korisnik sa ovim emailom nije pronadjen"));
+        
+        // Obrišemo stare reset tokene ako postoje
+        passwordResetTokenRepository.findByUserAndUsedFalse(user).ifPresent(passwordResetTokenRepository::delete);
+        
+        // Kreiramo novi reset token
+        String resetTokenStr = UUID.randomUUID().toString();
+        PasswordResetToken resetToken = PasswordResetToken.builder()
+                .token(resetTokenStr)
+                .user(user)
+                .expiryDate(LocalDateTime.now().plusSeconds(tokenExpiryTime / 1000))
+                .used(false)
+                .build();
+        
+        passwordResetTokenRepository.save(resetToken);
+        
+        // Slanje reset emaila
+        try {
+            emailService.sendPasswordResetEmail(user.getEmail(), user.getFirstName(), resetTokenStr);
+        } catch (Exception e) {
+            throw new RuntimeException("Greska pri slanju reset emaila. Pokusajte ponovo.");
+        }
+    }
+    
+    // RESET PASSWORD - Resetovanje lozinke
+    public void resetPassword(ResetPasswordRequest request) {
+        // Validacija da su lozinke iste
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new IllegalArgumentException("Lozinke se ne poklapaju");
+        }
+        
+        // Validacija jačine lozinke
+        PasswordStrengthValidator validator = PasswordStrengthValidator.builder()
+                .password(request.getNewPassword())
+                .build();
+        PasswordStrengthResult validationResult = validator.validateBasic();
+        
+        if (!validationResult.getValid()) {
+            String errors = String.join(", ", validationResult.getErrors());
+            throw new IllegalArgumentException("Lozinka nije dovoljno jaka: " + errors);
+        }
+        
+        // Pronalaženje i validacija tokena
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(request.getToken())
+                .orElseThrow(() -> new IllegalArgumentException("Nevalidan reset token"));
+        
+        if (resetToken.getUsed()) {
+            throw new IllegalArgumentException("Token je vec koristen");
+        }
+        
+        if (LocalDateTime.now().isAfter(resetToken.getExpiryDate())) {
+            throw new IllegalArgumentException("Reset token je istekao");
+        }
+        
+        // Resetovanje lozinke
+        User user = resetToken.getUser();
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+        
+        // Označavanje tokena kao korišten
+        resetToken.setUsed(true);
+        resetToken.setUsedAt(LocalDateTime.now());
+        passwordResetTokenRepository.save(resetToken);
+
+        
     }
     
     // Provera jačine lozinke
