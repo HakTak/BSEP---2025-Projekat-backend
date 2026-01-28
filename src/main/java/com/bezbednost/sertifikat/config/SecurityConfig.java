@@ -2,6 +2,7 @@ package com.bezbednost.sertifikat.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -37,8 +38,8 @@ public class SecurityConfig {
                 // 4. AUTORIZACIJA PUTANJA (Zamena za configure(HttpSecurity) i configure(WebSecurity))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
-                        .anyRequest().permitAll()
-                )
+                        .anyRequest().authenticated()
+                ).oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
 
                 // 5. ISKLJUČIVANJE DEFAULT LOGIN FORMI
                 // Isključujemo default login formu i basic auth jer će React slati podatke (JSON)

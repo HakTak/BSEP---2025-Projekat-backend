@@ -46,3 +46,6 @@ build/
 
 # Blokiramo logove
 *.log
+
+#properties
+*.properties
