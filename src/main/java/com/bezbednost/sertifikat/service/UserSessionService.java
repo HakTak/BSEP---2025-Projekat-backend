@@ -1,62 +1,118 @@
 package com.bezbednost.sertifikat.service;
 
+import com.bezbednost.sertifikat.dto.UserSessionDTO;
 import com.bezbednost.sertifikat.entity.User;
+import com.bezbednost.sertifikat.entity.UserRole;
 import com.bezbednost.sertifikat.model.UserSession;
+import com.bezbednost.sertifikat.repository.UserRepository;
 import com.bezbednost.sertifikat.repository.UserSessionRepository;
-import org.jsoup.Jsoup;
-import org.jsoup.safety.Safelist;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.transaction.Transactional;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
+@Service
 public class UserSessionService {
-    @Autowired
-    private UserSessionRepository sessionRepository;
 
-    // Poziva se prilikom LOGINA
-    public void createSession(User user, String tokenId, String ipAddress, String rawUserAgent) {
-        UserSession session = new UserSession();
-        session.setJwtTokenId(tokenId) ;
-        session.setUser(user);
-        session.setIpAddress(ipAddress);
+    private final UserSessionRepository userSessionRepository;
+    private final UserRepository userRepository;
 
-        // XSS ZAŠTITA: Čistimo User-Agent string pre upisa u bazu
-        // Haker može poslati <script> kroz User-Agent header
-        String safeDeviceInfo = Jsoup.clean(rawUserAgent, Safelist.none());
-        // Skratimo ako je predugačko (opciono, ali dobra praksa)
-        if (safeDeviceInfo.length() > 255) safeDeviceInfo = safeDeviceInfo.substring(0, 255);
-
-        session.setDeviceInfo(safeDeviceInfo);
-        session.setLastActivity(LocalDateTime.now());
-        session.setValid(true);
-
-        sessionRepository.save(session);
+    public UserSessionService(UserSessionRepository userSessionRepository, UserRepository userRepository) {
+        this.userSessionRepository = userSessionRepository;
+        this.userRepository = userRepository;
     }
 
-    // Praćenje aktivnosti (ažurira vreme)
-    public void updateLastActivity(String tokenId) {
-        sessionRepository.findByTokenId(tokenId).ifPresent(session -> {
-            session.setLastActivity(LocalDateTime.now());
-            sessionRepository.save(session);
-        });
-    }
-
-    // Opoziv sesije (Logout)
-    public void revokeSession(String tokenId) {
-        sessionRepository.findByTokenId(tokenId).ifPresent(session -> {
-            session.setValid(false);
-            sessionRepository.save(session);
-        });
-    }
-
-    public List<UserSession> getActiveSessions(Long userId) {
-        return sessionRepository.findByUserIdAndIsValidTrue(userId);
-    }
-
-    public boolean isSessionValid(String tokenId) {
-        return sessionRepository.findByTokenId(tokenId)
-                .map(UserSession::isValid)
+    public boolean isSessionRevoked(String sessionId) {
+        return userSessionRepository.findBySessionId(sessionId)
+                .map(UserSession::getIsRevoked)
                 .orElse(false);
+    }
+
+    public List<UserSessionDTO> getUserSessions(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Korisnik nije pronađen"));
+
+        return userSessionRepository.findAllByUserId(user.getId()).stream()
+                .map(session -> UserSessionDTO.builder()
+                        .sessionId(session.getSessionId())
+                        .ipAddress(session.getIpAddress())
+                        .deviceName(session.getDeviceName())
+                        .createdAt(session.getCreatedAt())
+                        .lastActive(session.getLastActive())
+                        .expiresAt(session.getExpiresAt())
+                        .isRevoked(session.getIsRevoked())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void revokeSession(String sessionId) {
+        UserSession session = userSessionRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new RuntimeException("Sesija nije pronađena"));
+        session.setIsRevoked(true);
+        userSessionRepository.save(session);
+    }
+
+    // Ovu metodu koristi Filter
+    @Transactional
+    public void trackUserSession(String email, String sessionId, String ipAddress, String userAgent, Jwt jwt) {
+        User user = userRepository.findByEmail(email).orElse(null);
+
+        if (user == null) {
+            user = User.builder()
+                    .email(email)
+                    .firstName(jwt.getClaimAsString("given_name"))
+                    .lastName(jwt.getClaimAsString("family_name"))
+                    .organization("Unknown")
+                    .password("")
+                    .role(UserRole.USER)
+                    .enabled(true)
+                    .build();
+            user = userRepository.save(user);
+        }
+
+        Instant exp = jwt.getExpiresAt();
+        LocalDateTime expiresAt = (exp != null)
+                ? LocalDateTime.ofInstant(exp, ZoneId.systemDefault())
+                : LocalDateTime.now().plusDays(30); // Fallback ako token nema exp
+
+        Optional<UserSession> existingSession = userSessionRepository.findBySessionId(sessionId);
+
+        if (existingSession.isPresent()) {
+            UserSession session = existingSession.get();
+            session.setLastActive(LocalDateTime.now());
+            session.setExpiresAt(expiresAt);
+
+            if (!session.getIpAddress().equals(ipAddress)) {
+                session.setIpAddress(ipAddress);
+            }
+            userSessionRepository.save(session);
+        } else {
+            UserSession newSession = UserSession.builder()
+                    .sessionId(sessionId)
+                    .user(user)
+                    .ipAddress(ipAddress)
+                    .deviceName(parseDeviceName(userAgent))
+                    .createdAt(LocalDateTime.now())
+                    .lastActive(LocalDateTime.now())
+                    .expiresAt(expiresAt)
+                    .isRevoked(false)
+                    .build();
+            userSessionRepository.save(newSession);
+        }
+    }
+
+    private String parseDeviceName(String userAgent) {
+        if (userAgent == null) return "Unknown Device";
+        if (userAgent.contains("Chrome")) return "Google Chrome";
+        if (userAgent.contains("Firefox")) return "Mozilla Firefox";
+        if (userAgent.contains("Edg")) return "Microsoft Edge";
+        return "Unknown Browser";
     }
 }

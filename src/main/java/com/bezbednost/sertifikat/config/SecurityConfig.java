@@ -2,7 +2,7 @@ package com.bezbednost.sertifikat.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -10,6 +10,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -18,31 +19,45 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
+
+    // --- IZMENA 1: Injektujemo naš custom filter za sesije ---
+    private final SessionTrackingFilter sessionTrackingFilter;
+
+    public SecurityConfig(SessionTrackingFilter sessionTrackingFilter) {
+        this.sessionTrackingFilter = sessionTrackingFilter;
+    }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
                 // 1. CORS KONFIGURACIJA
-                // Povezujemo CORS konfiguraciju definisanu u corsConfigurationSource() metodi ispod
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
 
                 // 2. CSRF
-                // Isključujemo CSRF jer koristimo Stateless sesiju (JWT ili slično) i React
                 .csrf(AbstractHttpConfigurer::disable)
 
-                // 3. SESSION MANAGEMENT
-                // Postavljamo sesiju na STATELESS (kao u vežbama), jer REST API ne treba da pamti stanje sesije na serveru
+                // 3. SESSION MANAGEMENT (Stateless)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-                // 4. AUTORIZACIJA PUTANJA (Zamena za configure(HttpSecurity) i configure(WebSecurity))
+                // 4. AUTORIZACIJA PUTANJA
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .anyRequest().authenticated()
-                ).oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+                )
+
+                // Konfiguracija za Keycloak (OAuth2 Resource Server)
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(
+                        jwt -> jwt.jwtAuthenticationConverter(new KeycloakJwtRolesConverter())))
+
+                // --- IZMENA 2: Dodajemo naš filter u lanac ---
+                // Dodajemo ga NAKON BasicAuthenticationFilter-a.
+                // U ovom trenutku Spring je već proverio JWT token i popunio SecurityContext,
+                // tako da naš filter može da pročita podatke o korisniku.
+                .addFilterAfter(sessionTrackingFilter, BasicAuthenticationFilter.class)
 
                 // 5. ISKLJUČIVANJE DEFAULT LOGIN FORMI
-                // Isključujemo default login formu i basic auth jer će React slati podatke (JSON)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable);
 
@@ -54,19 +69,17 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    // Definicija CORS-a (Zamena za CorsConfig klasu iz vežbi)
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // Dozvoljavamo tvoj React frontend (Vite port)
-        // NAPOMENA: Ako ti React radi na HTTP (ne HTTPS), promeni u "http://localhost:5173"
+        // Tvoj React frontend
         configuration.setAllowedOrigins(List.of("http://localhost:5173", "https://localhost:5173"));
 
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
-        configuration.setAllowCredentials(true); // Ako šalješ kolačiće ili Auth header
-        configuration.setMaxAge(3600L); // Iz vežbi (preflight cache)
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

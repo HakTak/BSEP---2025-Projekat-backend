@@ -1,38 +1,43 @@
 package com.bezbednost.sertifikat.controller;
 
-import com.bezbednost.sertifikat.dto.UserResponse;
-import com.bezbednost.sertifikat.entity.User;
-import com.bezbednost.sertifikat.model.UserSession;
+import com.bezbednost.sertifikat.dto.UserSessionDTO;
 import com.bezbednost.sertifikat.service.UserSessionService;
-import com.bezbednost.sertifikat.service.UserService; // Tvoj user service
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
-import java.security.Principal;
+
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/sessions")
+@RequestMapping("/api/user")
 public class UserSessionController {
 
-    @Autowired
-    private UserSessionService sessionService;
-    @Autowired
-    private UserService userService; // Pretpostavka da imas ovo
+    private final UserSessionService userSessionService;
 
-    // Endpoint za prikaz svih aktivnih sesija
-    @GetMapping("/active")
-    public ResponseEntity<List<UserSession>> getActiveSessions(Principal principal) {
-        UserResponse userResponse = userService.getUserByEmail(principal.getName());
-        return ResponseEntity.ok(sessionService.getActiveSessions(userResponse.getId()));
+    public UserSessionController(UserSessionService userSessionService) {
+        this.userSessionService = userSessionService;
     }
 
-    // Endpoint za opoziv (logout) specifičnog uređaja
-    @PostMapping("/revoke/{tokenId}")
-    public ResponseEntity<?> revokeSession(@PathVariable String tokenId) {
-        // Dodatna provera: ovde bi idealno trebao proveriti da li taj tokenId pripada ulogovanom korisniku
-        // da ne bi Pera mogao da izloguje Žiku ako pogodi UUID.
-        sessionService.revokeSession(tokenId);
-        return ResponseEntity.ok("Uređaj uspešno odjavljen.");
+    @GetMapping("/sessions")
+    public ResponseEntity<List<UserSessionDTO>> getActiveSessions(@AuthenticationPrincipal Jwt jwt, HttpServletRequest request) {
+        // Izvlačimo podatke iz JWT tokena
+        String email = jwt.getClaimAsString("email"); // ili "preferred_username" zavisno od Keycloaka
+        String sessionId = jwt.getClaimAsString("sid"); // Keycloak Session ID
+
+        // Opciono: Ažuriraj trenutnu sesiju u bazi da znamo da je korisnik živ
+        String ipAddress = request.getRemoteAddr();
+        String userAgent = request.getHeader("User-Agent");
+        userSessionService.trackUserSession(email, sessionId, ipAddress, userAgent, jwt);
+
+        // Vrati sve sesije
+        return ResponseEntity.ok(userSessionService.getUserSessions(email));
+    }
+
+    @PostMapping("/sessions/revoke/{sessionId}")
+    public ResponseEntity<String> revokeSession(@PathVariable String sessionId) {
+        userSessionService.revokeSession(sessionId);
+        return ResponseEntity.ok("Sesija uspešno opozvana i zabeležena u bazi.");
     }
 }
