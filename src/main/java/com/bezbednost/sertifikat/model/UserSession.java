@@ -29,8 +29,8 @@ public class UserSession {
     @Column(nullable = false)
     private String ipAddress;
 
-    @Column(nullable = false)
-    private String deviceName;
+    @Column(nullable = false, length = 1000)
+    private String userAgent;
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
