@@ -42,7 +42,7 @@ public class UserSessionService {
                 .map(session -> UserSessionDTO.builder()
                         .sessionId(session.getSessionId())
                         .ipAddress(session.getIpAddress())
-                        .deviceName(session.getDeviceName())
+                        .userAgent(session.getUserAgent())
                         .createdAt(session.getCreatedAt())
                         .lastActive(session.getLastActive())
                         .expiresAt(session.getExpiresAt())
@@ -98,7 +98,7 @@ public class UserSessionService {
                     .sessionId(sessionId)
                     .user(user)
                     .ipAddress(ipAddress)
-                    .deviceName(parseDeviceName(userAgent))
+                    .userAgent(userAgent)
                     .createdAt(LocalDateTime.now())
                     .lastActive(LocalDateTime.now())
                     .expiresAt(expiresAt)
@@ -108,11 +108,4 @@ public class UserSessionService {
         }
     }
 
-    private String parseDeviceName(String userAgent) {
-        if (userAgent == null) return "Unknown Device";
-        if (userAgent.contains("Chrome")) return "Google Chrome";
-        if (userAgent.contains("Firefox")) return "Mozilla Firefox";
-        if (userAgent.contains("Edg")) return "Microsoft Edge";
-        return "Unknown Browser";
-    }
 }

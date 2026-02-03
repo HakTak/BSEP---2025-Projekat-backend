@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 public class UserSessionDTO {
     private String sessionId;
     private String ipAddress;
-    private String deviceName;
+    private String userAgent;
     private LocalDateTime createdAt;
     private LocalDateTime lastActive;
     private LocalDateTime expiresAt;
