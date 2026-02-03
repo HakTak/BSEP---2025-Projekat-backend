@@ -99,7 +99,7 @@ public class UserService {
     }
     
     // Aktivacija naloga preko tokena
-    public void activateAccount(String token) {
+    public User activateAccount(String token) {
         ActivationToken activationToken = activationTokenRepository.findByToken(token)
                 .orElseThrow(() -> new IllegalArgumentException("Nevalidan aktivacioni token"));
         
@@ -122,6 +122,7 @@ public class UserService {
         activationToken.setUsed(true);
         activationToken.setUsedAt(LocalDateTime.now());
         activationTokenRepository.save(activationToken);
+        return user;
     }
     
     // Provera jačine lozinke

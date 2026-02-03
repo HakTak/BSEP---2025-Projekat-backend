@@ -5,6 +5,8 @@ import com.bezbednost.sertifikat.dto.RegisterRequest;
 import com.bezbednost.sertifikat.dto.RegisterResponse;
 import com.bezbednost.sertifikat.dto.UpdateUserRequest;
 import com.bezbednost.sertifikat.dto.UserResponse;
+import com.bezbednost.sertifikat.entity.User;
+import com.bezbednost.sertifikat.service.KeycloakService;
 import com.bezbednost.sertifikat.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,16 +20,20 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(origins = "https://localhost:5173")
 public class AuthController {
     
     @Autowired
     private UserService userService;
     
+    @Autowired
+    private KeycloakService keycloakService;
+    
     // CREATE - Registracija
     @PostMapping("/register")
     public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
         RegisterResponse response = userService.register(request);
+        keycloakService.createUser(request);
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
     
@@ -35,9 +41,10 @@ public class AuthController {
     @PostMapping("/activate")
     public ResponseEntity<Map<String, String>> activate(@RequestParam String token) {
         try {
-            userService.activateAccount(token);
+            User user = userService.activateAccount(token);
             Map<String, String> response = new HashMap<>();
             response.put("message", "Nalog je uspešno aktiviran! Sada možete da se ulogujete.");
+            keycloakService.enableAndVerifyUser(keycloakService.getUserIdByEmail(user.getEmail()));
             return new ResponseEntity<>(response, HttpStatus.OK);
         } catch (IllegalArgumentException e) {
             Map<String, String> response = new HashMap<>();
