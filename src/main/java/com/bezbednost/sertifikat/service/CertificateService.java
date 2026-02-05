@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
@@ -125,7 +126,7 @@ public class CertificateService {
     return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
 }
 
-    private Certificate validateIssuer(String issuerSerial) {
+    private Certificate validateIssuer(String issuerSerial) throws Exception {
         Certificate issuer = certificateRepository.findBySerialNumber(issuerSerial)
                 .orElseThrow(() -> new ResourceNotFoundException("Issuer certificate not found."));
 
@@ -138,8 +139,55 @@ public class CertificateService {
         if (issuer.getType() == CertificateType.END_ENTITY) {
             throw new CertificateValidationException("End-entity certificates cannot issue new certificates.");
         }
+
+        // Učitaj X509 objekat izdavaoca da bi ga proverio
+        java.security.cert.Certificate[] chain = keystoreService.getCertificateChain(
+            issuer.getKeystore().getId(), 
+            cryptoService.decryptAES(issuer.getKeystore().getEncryptedPassword()).toCharArray(), 
+            issuer.getAlias()
+        );
+        X509Certificate issuerX509 = (X509Certificate) chain[0];
+        
+        // Ako nije Root (koji je samopotpisan), proveri potpis pomoću ključa NJEGOVOG roditelja
+        try {
+            if (!issuer.getType().equals(CertificateType.ROOT)) {
+                // Nađi sertifikat koji je izdao ovaj CA sertifikat
+                Certificate parentOfIssuer = certificateRepository.findBySerialNumber(issuer.getIssuerSerialNumber())
+                    .orElseThrow(() -> new Exception("Parent of issuer not found"));
+                
+                // Uzmi javni ključ roditelja
+                PublicKey parentPubKey = ((X509Certificate) keystoreService.getCertificateChain(
+                    parentOfIssuer.getKeystore().getId(),
+                    cryptoService.decryptAES(parentOfIssuer.getKeystore().getEncryptedPassword()).toCharArray(),
+                    parentOfIssuer.getAlias()
+                )[0]).getPublicKey();
+        
+                // KRIPTOGRAFSKA PROVERA POTPISA
+                issuerX509.verify(parentPubKey);
+            } else {
+                // Ako je root, proveri ga njegovim sopstvenim ključem
+                issuerX509.verify(issuerX509.getPublicKey());
+            }
+        } catch (Exception e) {
+            throw new CertificateValidationException("Digitalni potpis izdavaoca nije validan!");
+        }
+
+        checkRevocationRecursive(issuer);
+
         return issuer;
     }
+
+    private void checkRevocationRecursive(Certificate cert) {
+    if (cert.isRevoked()) {
+        throw new CertificateValidationException("Sertifikat u lancu (" + cert.getSerialNumber() + ") je povučen!");
+    }
+    // Ako nije root, proveri njegovog roditelja
+    if (!cert.getType().equals(CertificateType.ROOT)) {
+        Certificate parent = certificateRepository.findBySerialNumber(cert.getIssuerSerialNumber())
+            .orElseThrow(() -> new ResourceNotFoundException("Parent not found"));
+        checkRevocationRecursive(parent);
+    }
+}
 
     private Certificate saveCertificateEntity(X509Certificate cert, User owner, Keystore keystore, CertificateType type, String issuerSerial) {
         Certificate certEntity = new Certificate();
