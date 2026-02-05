@@ -21,25 +21,31 @@ import java.util.Date;
 public class CertificateFactory {
 
     public X509Certificate createCertificate(
-            X500Name subject, X500Name issuer,
-            PublicKey subjectPublicKey, PrivateKey issuerPrivateKey,
-            ZonedDateTime validFrom, ZonedDateTime validTo,
-            BigInteger serialNumber,
-            boolean isCa, int keyUsage) throws Exception {
+        X500Name subject, X500Name issuer,
+        PublicKey subjectPublicKey, PrivateKey issuerPrivateKey,
+        ZonedDateTime validFrom, ZonedDateTime validTo,
+        BigInteger serialNumber,
+        boolean isCa, int keyUsage) throws Exception {
 
-        JcaX509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
-                issuer, serialNumber,
-                Date.from(validFrom.toInstant()),
-                Date.from(validTo.toInstant()),
-                subject, subjectPublicKey);
+    JcaX509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
+            issuer, 
+            serialNumber,
+            Date.from(validFrom.toInstant()),
+            Date.from(validTo.toInstant()),
+            subject, 
+            subjectPublicKey);
 
-        certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));
-        certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
+    // Važno: BasicConstraints mora biti kritična ekstenzija za CA
+    certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));
+    certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
 
-        ContentSigner contentSigner = new JcaContentSignerBuilder("SHA256WithRSAEncryption")
-                .setProvider("BC").build(issuerPrivateKey);
+    // Koristimo SHA256WithRSA
+    ContentSigner contentSigner = new JcaContentSignerBuilder("SHA256WithRSAEncryption")
+            .setProvider("BC") // Proveri da li je "BC" registrovan
+            .build(issuerPrivateKey);
 
-        return new JcaX509CertificateConverter().setProvider("BC")
-                .getCertificate(certBuilder.build(contentSigner));
-    }
+    return new JcaX509CertificateConverter()
+            .setProvider("BC")
+            .getCertificate(certBuilder.build(contentSigner));
+}
 }

@@ -24,6 +24,8 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -69,52 +71,59 @@ public class CertificateService {
 
     @Transactional
     public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
-        // 1. Validacija
-        Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber());
-        User subjectUser = userRepository.findById(dto.getSubjectUserId()).orElseThrow(() -> new ResourceNotFoundException("Subject user not found"));
+    // 1. Validacija izdavaoca
+    Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber());
+    User subjectUser = userRepository.findById(dto.getSubjectUserId())
+            .orElseThrow(() -> new ResourceNotFoundException("Subject user not found"));
 
-        // 2. Učitavanje podataka o izdavaocu
-        Keystore keystore = issuerCertData.getKeystore();
-        String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
-        PrivateKey issuerPrivateKey = keystoreService.getPrivateKey(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
-        java.security.cert.Certificate[] issuerChain = keystoreService.getCertificateChain(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
-        
-        if (issuerChain == null || issuerChain.length == 0) {
-            throw new ResourceNotFoundException(" PRAZAN LANAC SERTIFIKATA ZA IZDAVAOCA !");
-        }   
-        X509Certificate issuerCertX509 = (X509Certificate) issuerChain[0];
-
-        // 3. Generisanje podataka za novi sertifikat
-        KeyPair subjectKeyPair = cryptoService.generateRSAKeyPair();
-        X500Name subjectName = buildX500NameFromDto(dto);
-        X500Name issuerName = new X500Name(issuerCertX509.getSubjectX500Principal().getName());
-        BigInteger serialNumber = new BigInteger(128, new SecureRandom());
-        
-        boolean isCa = subjectUser.getRole() == UserRole.ADMIN || subjectUser.getRole() == UserRole.CA_USER;
-        int keyUsage = isCa ? KeyUsage.keyCertSign | KeyUsage.cRLSign : KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
-
-        // 4. Kreiranje sertifikata
-        X509Certificate newCert = certificateFactory.createCertificate(
-            subjectName, issuerName,
-            subjectKeyPair.getPublic(), issuerPrivateKey,
-            dto.getValidFrom(), dto.getValidTo(),
-            serialNumber, isCa, keyUsage
-        );
-        
-        // 5. Čuvanje u keystore
-        String alias = serialNumber.toString();
-        java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
-        newChain[0] = newCert;
-        System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length);
-        
-        var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
-        ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
-        keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
-
-        // 6. Čuvanje u bazu
-        CertificateType type = isCa ? CertificateType.INTERMEDIATE : CertificateType.END_ENTITY;
-        return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
+    // 2. Učitavanje ključa i lanca roditelja
+    Keystore keystore = issuerCertData.getKeystore();
+    String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
+    
+    PrivateKey issuerPrivateKey = keystoreService.getPrivateKey(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
+    java.security.cert.Certificate[] issuerChain = keystoreService.getCertificateChain(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
+    
+    if (issuerChain == null || issuerChain.length == 0) {
+        throw new CertificateValidationException("Neuspešno učitavanje lanca izdavaoca.");
     }
+    
+    // KLJUČNA STVAR: Uzimamo X500Name direktno iz encoded forme roditelja da izbegnemo String mismatch
+    X509Certificate issuerCertX509 = (X509Certificate) issuerChain[0];
+    X500Name issuerName = X500Name.getInstance(issuerCertX509.getSubjectX500Principal().getEncoded());
+
+    // 3. Generisanje podataka za novi sertifikat
+    KeyPair subjectKeyPair = cryptoService.generateRSAKeyPair();
+    X500Name subjectName = buildX500NameFromDto(dto);
+    BigInteger serialNumber = new BigInteger(128, new SecureRandom());
+    
+    boolean isCa = subjectUser.getRole() == UserRole.ADMIN || subjectUser.getRole() == UserRole.CA_USER;
+    int keyUsage = isCa ? KeyUsage.keyCertSign | KeyUsage.cRLSign : KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+
+    // 4. Kreiranje sertifikata
+    X509Certificate newCert = certificateFactory.createCertificate(
+        subjectName, issuerName,
+        subjectKeyPair.getPublic(), issuerPrivateKey,
+        dto.getValidFrom(), dto.getValidTo(),
+        serialNumber, isCa, keyUsage
+    );
+
+    // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
+    java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
+    newChain[0] = newCert; // Novi je na vrhu
+    System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
+
+    // 6. Snimanje u Keystore (p12 fajl)
+    String alias = serialNumber.toString();
+    var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
+    
+    // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
+    ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
+    keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
+
+    // 7. Snimanje u bazu
+    CertificateType type = isCa ? CertificateType.INTERMEDIATE : CertificateType.END_ENTITY;
+    return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
+}
 
     private Certificate validateIssuer(String issuerSerial) {
         Certificate issuer = certificateRepository.findBySerialNumber(issuerSerial)
@@ -167,5 +176,33 @@ public class CertificateService {
     return true;
 }
 
-    
+    public List<String> getAllCertificateSerialNumbers() {
+        return certificateRepository.findAll()
+                .stream()
+                .map(Certificate::getSerialNumber)
+                .collect(Collectors.toList());
+    }
+
+    public Certificate getCertificateBySerialNumber(String serialNumber) {
+        return certificateRepository.findBySerialNumber(serialNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Certificate not found"));
+    }
+
+    public byte[] downloadCertificateAsDER(String serialNumber) throws Exception {
+        Certificate certEntity = getCertificateBySerialNumber(serialNumber);
+        Keystore keystore = certEntity.getKeystore();
+        String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
+        
+        java.security.cert.Certificate[] certChain = keystoreService.getCertificateChain(
+                keystore.getId(), 
+                password.toCharArray(), 
+                certEntity.getAlias()
+        );
+        
+        if (certChain == null || certChain.length == 0) {
+            throw new ResourceNotFoundException("Certificate not found in keystore");
+        }
+        
+        return certChain[0].getEncoded();
+    }
 }
