@@ -1,16 +1,11 @@
 package com.bezbednost.sertifikat.service;
 
-import com.bezbednost.sertifikat.dto.ForgotPasswordRequest;
-import com.bezbednost.sertifikat.dto.PasswordStrengthResponse;
-import com.bezbednost.sertifikat.dto.RegisterRequest;
-import com.bezbednost.sertifikat.dto.RegisterResponse;
-import com.bezbednost.sertifikat.dto.ResetPasswordRequest;
-import com.bezbednost.sertifikat.dto.UpdateUserRequest;
-import com.bezbednost.sertifikat.dto.UserResponse;
+import com.bezbednost.sertifikat.dto.*;
 import com.bezbednost.sertifikat.entity.ActivationToken;
 import com.bezbednost.sertifikat.entity.PasswordResetToken;
 import com.bezbednost.sertifikat.entity.User;
 import com.bezbednost.sertifikat.entity.UserRole;
+import com.bezbednost.sertifikat.util.PasswordGenerator;
 import com.bezbednost.sertifikat.repository.ActivationTokenRepository;
 import com.bezbednost.sertifikat.repository.PasswordResetTokenRepository;
 import com.bezbednost.sertifikat.repository.UserRepository;
@@ -18,7 +13,10 @@ import com.bezbednost.sertifikat.validator.PasswordStrengthValidator;
 import com.bezbednost.sertifikat.validator.PasswordStrengthResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -43,7 +41,13 @@ public class UserService {
     
     @Autowired
     private EmailService emailService;
-    
+
+    @Autowired
+    private PasswordGenerator passwordGenerator;
+
+    @Autowired
+    private KeycloakService keycloakService;
+
     @Value("${app.activation.token.expiry}")
     private long tokenExpiryTime;
     
@@ -104,6 +108,56 @@ public class UserService {
         
         return new RegisterResponse("Registracija uspešna! Proverite email za aktivacioni link.", request.getEmail());
     }
+
+    public RegisterResponse registerCAUser(CreateCARequest request) {
+        // 1. Validacija emaila
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new IllegalArgumentException("Korisnik sa ovim email-om već postoji.");
+        }
+
+        // 2. Generisanje jake nasumične lozinke
+        String tempPassword = passwordGenerator.generateStrongPassword();
+
+        // 3. Kreiranje lokalnog korisnika
+        User user = User.builder()
+                .email(request.getEmail())
+                // U lokalnoj bazi čuvamo hash lozinke (iako se auth radi preko Keycloaka, dobra je praksa imati sync)
+                .password(passwordEncoder.encode(tempPassword))
+                .firstName(request.getFirstName())
+                .lastName(request.getLastName())
+                .organization(request.getOrganization())
+                .role(UserRole.CA_USER) // <--- CA ROLA
+                .enabled(true) // Odmah je aktivan
+                .build();
+
+        userRepository.save(user);
+
+        // 4. Kreiranje korisnika u Keycloaku
+        try {
+            keycloakService.createCAUser(
+                    request.getEmail(),
+                    request.getFirstName(),
+                    request.getLastName(),
+                    request.getOrganization(),
+                    tempPassword
+            );
+        } catch (Exception e) {
+            // Rollback lokalne baze ako Keycloak pukne
+            userRepository.delete(user);
+            throw new RuntimeException("Greška pri kreiranju CA korisnika u Keycloaku: " + e.getMessage());
+        }
+
+        // 5. Slanje emaila sa lozinkom
+        try {
+            emailService.sendCACredentials(request.getEmail(), request.getFirstName(), tempPassword);
+        } catch (Exception e) {
+            // Ovde ne radimo rollback, ali logujemo grešku.
+            // Admin može ručno da resetuje lozinku ili ponovi proces ako je kritično.
+            System.err.println("Greska pri slanju mejla CA korisniku: " + e.getMessage());
+        }
+
+        return new RegisterResponse("CA Korisnik uspešno kreiran. Kredencijali su poslati na email.", request.getEmail());
+    }
     
     // Aktivacija naloga preko tokena
     public User activateAccount(String token) {
@@ -131,6 +185,57 @@ public class UserService {
         activationTokenRepository.save(activationToken);
         return user;
     }
+
+    public void changeCaUserPassword(ChangePasswordRequest request) {
+
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new IllegalArgumentException("Lozinke se ne poklapaju");
+        }
+
+        PasswordStrengthValidator validator = PasswordStrengthValidator.builder()
+                .password(request.getNewPassword())
+                .build();
+
+        PasswordStrengthResult result = validator.validate();
+
+        if (!result.getValid()) {
+            throw new IllegalArgumentException(String.join(", ", result.getErrors()));
+        }
+
+        // 1. Uzimamo Authentication i kastujemo u JWT
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        // 2. Izvlačimo email (privremena promenljiva)
+        String tempEmail = jwt.getClaimAsString("email");
+
+        // Fallback logika (ako nema emaila, probaj username)
+        if (tempEmail == null) {
+            tempEmail = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (tempEmail == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String email = tempEmail;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + email));
+
+        // 5. Promeni lozinku u Keycloak-u
+        keycloakService.updatePassword(email, request.getNewPassword());
+
+        // 6. Update lokalno
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        // 7. SET mustChangePassword = false u Keycloak-u
+        keycloakService.updateUserAttribute(email, "mustChangePassword", "false");
+    }
+
     
     // FORGOT PASSWORD - Zahtev za reset lozinke
     public void forgotPassword(ForgotPasswordRequest request) {
@@ -198,8 +303,6 @@ public class UserService {
         resetToken.setUsed(true);
         resetToken.setUsedAt(LocalDateTime.now());
         passwordResetTokenRepository.save(resetToken);
-
-        
     }
     
     // Provera jačine lozinke

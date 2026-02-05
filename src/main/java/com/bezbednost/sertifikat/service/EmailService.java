@@ -43,6 +43,27 @@ public class EmailService {
             throw new RuntimeException("Greška pri slanju email-a: " + e.getMessage());
         }
     }
+    public void sendCACredentials(String to, String firstName, String password) {
+        String subject = "Dobrodošli u PKI Sistem - Vaši podaci za pristup";
+        String text = "Poštovani " + firstName + ",\n\n" +
+                "Administrator vas je registrovao kao CA korisnika.\n" +
+                "Vaša privremena lozinka je: " + password + "\n\n" +
+                "Molimo vas da se prijavite na sistem. Prilikom prvog pristupa bićete obavezni da promenite ovu lozinku.\n\n" +
+                "Srdačan pozdrav,\nPKI Tim";
+
+        // Poziv tvoje postojeće metode za slanje mejla (sendSimpleMessage ili slično)
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(to);
+        message.setSubject(subject);
+        message.setText(text);
+
+        try {
+            mailSender.send(message);
+        } catch (Exception e) {
+            throw new RuntimeException("Greška pri slanju email-a: " + e.getMessage());
+        }
+    }
     
     public void sendPasswordResetEmail(String toEmail, String firstName, String resetToken) {
         String resetLink = frontendUrl + "/reset-password?token=" + resetToken;
