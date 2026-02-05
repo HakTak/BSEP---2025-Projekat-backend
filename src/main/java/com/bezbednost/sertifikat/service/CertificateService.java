@@ -1,35 +1,52 @@
 package com.bezbednost.sertifikat.service;
 
 import com.bezbednost.sertifikat.dto.CertificateIssueDTO;
+import com.bezbednost.sertifikat.dto.CsrDTO;
 import com.bezbednost.sertifikat.entity.*;
 import com.bezbednost.sertifikat.exception.CertificateValidationException;
 import com.bezbednost.sertifikat.exception.ResourceNotFoundException;
 import com.bezbednost.sertifikat.model.Certificate;
 import com.bezbednost.sertifikat.model.CertificateType;
+import com.bezbednost.sertifikat.model.Csr;
+import com.bezbednost.sertifikat.model.CsrStatus;
 import com.bezbednost.sertifikat.model.Keystore;
 import com.bezbednost.sertifikat.repository.CertificateRepository;
+import com.bezbednost.sertifikat.repository.CsrRepository;
 import com.bezbednost.sertifikat.repository.UserRepository;
 import com.bezbednost.sertifikat.repository.KeyStoreRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x500.style.IETFUtils;
 import org.bouncycastle.asn1.x509.CRLReason;
 import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.ocsp.BasicOCSPResp;
 import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
 import org.bouncycastle.cert.ocsp.CertificateID;
 import org.bouncycastle.cert.ocsp.CertificateStatus;
+import org.bouncycastle.cert.ocsp.OCSPReq;
 import org.bouncycastle.cert.ocsp.OCSPResp;
 import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
+import org.bouncycastle.cert.ocsp.Req;
 import org.bouncycastle.cert.ocsp.RevokedStatus;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.DigestCalculator;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.util.io.pem.PemObject;
+import org.bouncycastle.util.io.pem.PemReader;
 import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.io.StringReader;
 import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.PrivateKey;
@@ -38,6 +55,7 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -52,7 +70,8 @@ public class CertificateService {
     private final CryptoService cryptoService;
     private final KeystoreService keystoreService;
     private final CertificateFactory certificateFactory;
-
+    private final CsrRepository csrRepository;
+    
     @Transactional
     public Certificate issueRootCertificate(Long adminId, CertificateIssueDTO dto) throws Exception {
         User admin = userRepository.findById(adminId).orElseThrow(() -> new ResourceNotFoundException("Admin not found"));
@@ -268,18 +287,39 @@ public class CertificateService {
         return certChain[0].getEncoded();
     }
     
-    public byte[] generateOcspResponse(String serialNumber) throws Exception {
+    public byte[] handleOcspRequest(byte[] requestBytes) {
 
-        Certificate cert = certificateRepository.findBySerialNumber(serialNumber).orElseGet(null);
-        if (cert == null) return null;
+        try {
+
+            OCSPReq ocspReq = new OCSPReq(requestBytes);
+
+            Req[] requests = ocspReq.getRequestList();
+
+            CertificateID certId = requests[0].getCertID();
+
+            BigInteger serial = certId.getSerialNumber();
+
+            return buildOcspResponse(serial.toString());
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+    
+    public byte[] buildOcspResponse(String serialNumber) throws Exception {
+
+        Certificate cert = certificateRepository.findBySerialNumber(serialNumber).orElseThrow(() 
+        		-> new IllegalArgumentException("Certificate not found"));
+        
+        var password = cryptoService.decryptAES(cert.getKeystore().getEncryptedPassword());
         
         X509Certificate issuerCert =
                 (X509Certificate) keystoreService.getCertificate(cert.getKeystore().getId(),
-                		cert.getKeystore().getEncryptedPassword().toCharArray(), cert.getAlias());
+                		password.toCharArray(), cert.getAlias());
 
         PrivateKey issuerKey =
                 keystoreService.getPrivateKey(cert.getKeystore().getId(),
-                		cert.getKeystore().getEncryptedPassword().toCharArray(), cert.getAlias());
+                		password.toCharArray(), cert.getAlias());
 
         try {
             X509CertificateHolder issuerHolder =
@@ -333,4 +373,85 @@ public class CertificateService {
             throw new IllegalStateException("Failed to build OCSP response", e);
         }
     }
+    
+    public Csr submitCsr(CsrDTO csrDTO) throws Exception {
+
+        Certificate ca = certificateRepository.findById(csrDTO.intermediateCaId)
+                .orElseThrow(() -> new IllegalArgumentException("Intermediate CA not found"));
+        
+        validateIssuer(ca.getSerialNumber());
+
+        if (csrDTO.expiresAt.isAfter(ca.getValidTo()))
+            throw new IllegalArgumentException("Requested expiration outside CA validity");
+
+        PKCS10CertificationRequest csrObj = parse(csrDTO.csrPem);
+        X500Name x500 = csrObj.getSubject();
+
+        // Extract X500Name fields
+        String cn  = getRdnValue(x500, BCStyle.CN);
+        String o   = getRdnValue(x500, BCStyle.O);
+        String ou  = getRdnValue(x500, BCStyle.OU);
+        String c   = getRdnValue(x500, BCStyle.C);
+        String st  = getRdnValue(x500, BCStyle.ST);
+        String l   = getRdnValue(x500, BCStyle.L);
+
+        String publicKeyPem = getPublicKey(csrObj);
+
+        Csr entity = Csr.builder()
+                .commonName(cn)
+                .organization(o)
+                .organizationalUnit(ou)
+                .country(c)
+                .state(st)
+                .locality(l)
+                .publicKey(publicKeyPem)
+                .expiresAt(csrDTO.expiresAt)
+                .intermediateCaId(1L)
+                .issuedAt(LocalDateTime.now())
+                .status(CsrStatus.PENDING)
+                .build();
+
+        return csrRepository.save(entity);
+    }
+	
+	private String getRdnValue(X500Name x500, ASN1ObjectIdentifier type) {
+        RDN[] rdns = x500.getRDNs(type);
+        if (rdns != null && rdns.length > 0) {
+            return IETFUtils.valueToString(rdns[0].getFirst().getValue());
+        }
+        return null;
+    }
+	
+	private PKCS10CertificationRequest parse(String pem) {
+        try (PemReader reader = new PemReader(new StringReader(pem.trim()))) {
+            PemObject obj = reader.readPemObject();
+            if (obj == null || (!obj.getType().equals("CERTIFICATE REQUEST")
+                    && !obj.getType().equals("NEW CERTIFICATE REQUEST"))) {
+                throw new IllegalArgumentException("Invalid CSR PEM");
+            }
+            return new PKCS10CertificationRequest(obj.getContent());
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Failed to parse CSR", e);
+        }
+    }
+
+	private String getPublicKey(PKCS10CertificationRequest csr) {
+	    try {
+	        SubjectPublicKeyInfo pkInfo = csr.getSubjectPublicKeyInfo();
+	        byte[] encoded = pkInfo.getEncoded();
+	        // Just Base64 string of the key
+	        return Base64.getEncoder().encodeToString(encoded);
+	    } catch (IOException e) {
+	        throw new IllegalArgumentException("Failed to extract public key", e);
+	    }
+	}
+	
+	public Certificate revoke(String serialNumber, String revokeReason) {
+		 Certificate c = certificateRepository.findBySerialNumber(serialNumber)
+	                .orElseThrow(() -> new IllegalArgumentException("Certificate not found"));
+		 c.setRevoked(true);
+		 c.setRevocationDate(LocalDateTime.now());
+		 c.setRevocationReason(revokeReason);
+		 return c;
+	}
 }

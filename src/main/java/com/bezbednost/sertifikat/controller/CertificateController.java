@@ -2,8 +2,11 @@ package com.bezbednost.sertifikat.controller;
 
 import com.bezbednost.sertifikat.dto.CertificateDetailsDTO;
 import com.bezbednost.sertifikat.dto.CertificateIssueDTO;
+import com.bezbednost.sertifikat.dto.CsrDTO;
+import com.bezbednost.sertifikat.dto.RevocationRequest;
 import com.bezbednost.sertifikat.service.CertificateService;
 
+import jakarta.ws.rs.core.Response.Status;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpHeaders;
@@ -12,7 +15,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
 
@@ -83,17 +85,26 @@ public class CertificateController {
             value = "/check",
             produces = "application/ocsp-response"
         )
-        public ResponseEntity<byte[]> check(@RequestParam String serialNumber) {
+        public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
 
-            byte[] response = null;
-			try {
-				response = certificateService.generateOcspResponse(serialNumber);
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
+        	byte[] responseBytes = certificateService.handleOcspRequest(requestBytes);
 
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType("application/ocsp-response"))
-                    .body(response);
+                    .header("Content-Type", "application/ocsp-response")
+                    .body(responseBytes);
         }
+        
+     @PutMapping("/revoke")
+     public ResponseEntity<?> revoke(@RequestBody RevocationRequest revocationRequest){
+    	 return ResponseEntity.ok().body(certificateService.revoke(revocationRequest.getSerialNumber(), revocationRequest.getReason()));
+     }
+     
+     @PostMapping("/submitCsr")
+     public ResponseEntity<?> submitCsr(@RequestBody CsrDTO csrDTO){
+    	 try {
+			return ResponseEntity.ok().body(certificateService.submitCsr(csrDTO));
+		} catch (Exception e) {
+			 return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+		}
+     }
 }
