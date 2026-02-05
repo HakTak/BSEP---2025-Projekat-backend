@@ -13,7 +13,7 @@ public class KeycloakConfig {
                 .serverUrl("http://localhost:8080")
                 .realm("sertifikat")
                 .clientId("my-backend") // The ID from Step 1
-                .clientSecret("ELHktbcULjg7cfmP3Valte49Q2kM1K51") // The Secret from Step 3
+                .clientSecret("3PfADgyR1InW2pJr7HeOA5c0uAnbNkcd") // The Secret from Step 3
                 .grantType("client_credentials") // This is the "Service Account" flow
                 .build();
     }
