@@ -65,6 +65,36 @@ public class AuthController {
         }
     }
     
+    // FORGOT PASSWORD - Zahtev za reset
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        try {
+            userService.forgotPassword(request);
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Email za oporavak lozinke je poslat na vašu email adresu. Molimo proverite email.");
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("error", e.getMessage());
+            return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+        }
+    }
+    
+    // RESET PASSWORD - Resetovanje lozinke
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        try {
+            userService.resetPassword(request);
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Lozinka je uspešno resetovana! Sada možete da se ulogujete sa novom lozinkom.");
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("error", e.getMessage());
+            return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+        }
+    }
+    
     // CHECK PASSWORD STRENGTH
     @PostMapping("/checkPasswordStrength")
     public ResponseEntity<PasswordStrengthResponse> checkPasswordStrength(@RequestBody Map<String, String> request) {

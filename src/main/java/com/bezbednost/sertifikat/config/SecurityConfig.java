@@ -48,7 +48,7 @@ public class SecurityConfig {
 
                 // 4. AUTORIZACIJA PUTANJA
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers("\"/api/auth/register\", \"/api/auth/activate\", \"/api/auth/forgot-password\", \"/api/auth/reset-password\", \"/swagger-ui.html\", \"/v3/api-docs/**\", \"/swagger-ui/**").permitAll()
                         .anyRequest().authenticated()
                 )
 
@@ -81,7 +81,6 @@ public class SecurityConfig {
 
         // Tvoj React frontend
         configuration.setAllowedOrigins(List.of("http://localhost:5173", "https://localhost:5173"));
-
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
         configuration.setAllowCredentials(true);
