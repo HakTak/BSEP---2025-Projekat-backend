@@ -1,10 +1,6 @@
 package com.bezbednost.sertifikat.controller;
 
-import com.bezbednost.sertifikat.dto.PasswordStrengthResponse;
-import com.bezbednost.sertifikat.dto.RegisterRequest;
-import com.bezbednost.sertifikat.dto.RegisterResponse;
-import com.bezbednost.sertifikat.dto.UpdateUserRequest;
-import com.bezbednost.sertifikat.dto.UserResponse;
+import com.bezbednost.sertifikat.dto.*;
 import com.bezbednost.sertifikat.entity.User;
 import com.bezbednost.sertifikat.service.KeycloakService;
 import com.bezbednost.sertifikat.service.UserService;
@@ -12,6 +8,7 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -31,14 +28,29 @@ public class AuthController {
     
     // CREATE - Registracija
     @PostMapping("/register")
+    @PreAuthorize("isAnonymous()")
     public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
         RegisterResponse response = userService.register(request);
         keycloakService.createUser(request);
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
-    
+
+    @PostMapping("/register-ca")
+    @PreAuthorize("hasRole('ADMIN')") // <--- Samo Admin može ovo
+    public ResponseEntity<RegisterResponse> registerCA(@Valid @RequestBody CreateCARequest request) {
+        RegisterResponse response = userService.registerCAUser(request);
+        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+    @PostMapping("/change-password")
+    @PreAuthorize("hasRole('CA_USER')")
+    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
+        userService.changeCaUserPassword(request);
+        return ResponseEntity.ok(Map.of("message", "Lozinka uspešno promenjena"));
+    }
+
     // ACTIVATE - Aktivacija naloga
     @PostMapping("/activate")
+    @PreAuthorize("isAnonymous()")
     public ResponseEntity<Map<String, String>> activate(@RequestParam String token) {
         try {
             User user = userService.activateAccount(token);

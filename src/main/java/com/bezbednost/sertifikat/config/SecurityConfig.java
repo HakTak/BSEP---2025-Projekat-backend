@@ -24,9 +24,14 @@ public class SecurityConfig {
 
     // --- IZMENA 1: Injektujemo naš custom filter za sesije ---
     private final SessionTrackingFilter sessionTrackingFilter;
+    private final MustChangePasswordFilter mustChangePasswordFilter;
 
-    public SecurityConfig(SessionTrackingFilter sessionTrackingFilter) {
+    public SecurityConfig(
+            SessionTrackingFilter sessionTrackingFilter,
+            MustChangePasswordFilter mustChangePasswordFilter
+    ) {
         this.sessionTrackingFilter = sessionTrackingFilter;
+        this.mustChangePasswordFilter = mustChangePasswordFilter;
     }
 
     @Bean
@@ -56,6 +61,7 @@ public class SecurityConfig {
                 // U ovom trenutku Spring je već proverio JWT token i popunio SecurityContext,
                 // tako da naš filter može da pročita podatke o korisniku.
                 .addFilterAfter(sessionTrackingFilter, BasicAuthenticationFilter.class)
+                .addFilterAfter(mustChangePasswordFilter, SessionTrackingFilter.class)
 
                 // 5. ISKLJUČIVANJE DEFAULT LOGIN FORMI
                 .httpBasic(AbstractHttpConfigurer::disable)

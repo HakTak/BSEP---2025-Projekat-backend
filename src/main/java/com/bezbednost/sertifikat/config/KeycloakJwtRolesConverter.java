@@ -7,65 +7,36 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class KeycloakJwtRolesConverter implements Converter<Jwt, AbstractAuthenticationToken> {
 
-    // Defaultni konverter koji preuzima Scopes (npr. "SCOPE_openid")
-    private final JwtGrantedAuthoritiesConverter defaultGrantedAuthoritiesConverter = new JwtGrantedAuthoritiesConverter();
-
     @Override
     public AbstractAuthenticationToken convert(Jwt jwt) {
-        // Spajamo standardne scope-ove i naše role
-        Collection<GrantedAuthority> authorities = Stream.concat(
-                defaultGrantedAuthoritiesConverter.convert(jwt).stream(),
-                extractRealmRoles(jwt).stream()
-        ).collect(Collectors.toSet());
+        // 1. Čitamo claim "role" koji smo definisali u Keycloak maperu
+        String roleClaim = jwt.getClaimAsString("role");
 
-        return new JwtAuthenticationToken(jwt, authorities);
-    }
-
-    private Collection<? extends GrantedAuthority> extractRealmRoles(Jwt jwt) {
-        // Keycloak stavlja realm role u "realm_access" claim
-        Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
-
-        if (realmAccess == null || !realmAccess.containsKey("roles")) {
-            return Collections.emptySet();
+        // Ako nema role u tokenu, vraćamo praznu listu prava
+        if (roleClaim == null || roleClaim.isEmpty()) {
+            return new JwtAuthenticationToken(jwt, Collections.emptySet());
         }
 
-        @SuppressWarnings("unchecked")
-        Collection<String> rawRoles = (Collection<String>) realmAccess.get("roles");
-
-        // Pretvaramo sve role iz Keycloaka u velika slova da ne bi bilo problema (admin vs ADMIN)
-        Set<String> roles = rawRoles.stream()
-                .map(String::toUpperCase)
-                .collect(Collectors.toSet());
-
-        // --- LOGIKA PRIORITETA (HIJERARHIJA) ---
-
-        // 1. Ako ima ADMIN rolu, on je ADMIN (najviši prioritet)
-        if (roles.contains(UserRole.ADMIN.name())) {
-            return Set.of(new SimpleGrantedAuthority("ROLE_" + UserRole.ADMIN.name()));
+        // 2. Konvertujemo string u UserRole Enum da budemo sigurni da je validan
+        // Koristimo try-catch u slučaju da u Keycloaku piše nešto glupo (npr. "HAKER")
+        UserRole userRole;
+        try {
+            userRole = UserRole.valueOf(roleClaim.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            // Ako rola nije prepoznata (nije ADMIN, USER ili CA_USER), ignorišemo je
+            return new JwtAuthenticationToken(jwt, Collections.emptySet());
         }
 
-        // 2. Ako nije Admin, proveravamo da li je CA_USER
-        if (roles.contains(UserRole.CA_USER.name())) {
-            return Set.of(new SimpleGrantedAuthority("ROLE_" + UserRole.CA_USER.name()));
-        }
+        // 3. Pravimo Spring Authority. OBAVEZNO mora imati prefiks "ROLE_"
+        SimpleGrantedAuthority authority = new SimpleGrantedAuthority("ROLE_" + userRole.name());
 
-        // 3. Ako nije ni to, proveravamo da li je običan USER
-        if (roles.contains(UserRole.USER.name())) {
-            return Set.of(new SimpleGrantedAuthority("ROLE_" + UserRole.USER.name()));
-        }
-
-        // Ako nema prepoznatu rolu
-        return Collections.emptySet();
+        return new JwtAuthenticationToken(jwt, Set.of(authority));
     }
 }
