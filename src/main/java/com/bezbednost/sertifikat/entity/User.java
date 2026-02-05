@@ -1,5 +1,8 @@
 package com.bezbednost.sertifikat.entity;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -39,4 +42,19 @@ public class User {
     
     @Column(nullable = false)
     private Boolean enabled;
+
+    @OneToMany(
+        mappedBy = "user",
+        cascade = CascadeType.ALL,
+        orphanRemoval = true
+    )
+    private List<ActivationToken> activationTokens = new ArrayList<>();
+
+
+    @OneToMany(
+        mappedBy = "user",
+        cascade = CascadeType.ALL,
+        orphanRemoval = true
+    )
+    private List<PasswordResetToken> passwordResetTokens = new ArrayList<>();
 }

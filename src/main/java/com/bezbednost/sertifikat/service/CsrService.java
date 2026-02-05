@@ -2,32 +2,16 @@ package com.bezbednost.sertifikat.service;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.math.BigInteger;
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Base64;
-import java.util.Date;
+
 
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x500.style.IETFUtils;
-import org.bouncycastle.asn1.x509.CRLReason;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.ocsp.BasicOCSPResp;
-import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
-import org.bouncycastle.cert.ocsp.CertificateID;
-import org.bouncycastle.cert.ocsp.CertificateStatus;
-import org.bouncycastle.cert.ocsp.OCSPResp;
-import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
-import org.bouncycastle.cert.ocsp.RevokedStatus;
-import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.DigestCalculator;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
-import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemReader;
@@ -50,13 +34,14 @@ public class CsrService {
 	@Autowired
 	private CertificateRepository certificateRepository;
 	
+	
 	public Csr submitCsr(CsrDTO csrDTO) {
 
         Certificate ca = certificateRepository.findById(csrDTO.intermediateCaId)
                 .orElseThrow(() -> new IllegalArgumentException("Intermediate CA not found"));
 
         if (ca.isRevoked()) throw new IllegalArgumentException("CA is revoked");
-        if (csrDTO.expiresAt.isAfter(ca.getExpiresAt()))
+        if (csrDTO.expiresAt.isAfter(ca.getValidTo()))
             throw new IllegalArgumentException("Requested expiration outside CA validity");
 
         PKCS10CertificationRequest csrObj = parse(csrDTO.csrPem);
@@ -82,7 +67,7 @@ public class CsrService {
                 .publicKey(publicKeyPem)
                 .expiresAt(csrDTO.expiresAt)
                 .intermediateCaId(1L)
-                .issuedAt(Instant.now())
+                .issuedAt(LocalDateTime.now())
                 .status(CsrStatus.PENDING)
                 .build();
 
@@ -121,68 +106,4 @@ public class CsrService {
 	    }
 	}
 	
-	 public byte[] generateOcspResponse(BigInteger serialNumber) {
-
-	        Certificate cert = certificateRepository.findBySerialNumber(serialNumber);
-	        if (cert == null) return null;
-	        //naci sifru iza issuer cert
-
-	        X509Certificate issuerCert =
-	                keystoreService.getCaCertificate("blsh","dsadas", "ada".toCharArray());
-
-	        PrivateKey issuerKey =
-	                keystoreService.getCaPrivateKey("blsh","dsadas", "ada".toCharArray());
-
-	        try {
-	            X509CertificateHolder issuerHolder =
-	                    new X509CertificateHolder(issuerCert.getEncoded());
-
-	            DigestCalculator digestCalculator =
-	                    new JcaDigestCalculatorProviderBuilder()
-	                            .build()
-	                            .get(CertificateID.HASH_SHA1);
-
-	            CertificateID certId = new CertificateID(
-	                    digestCalculator,
-	                    issuerHolder,
-	                    BigInteger.valueOf(cert.getId())
-	            );
-
-	            CertificateStatus status =
-	                    cert.isRevoked()
-	                            ? new RevokedStatus(new Date(), CRLReason.privilegeWithdrawn)
-	                            : CertificateStatus.GOOD;
-
-	            BasicOCSPRespBuilder builder =
-	                    new BasicOCSPRespBuilder(
-	                            issuerHolder.getSubjectPublicKeyInfo(),
-	                            digestCalculator
-	                    );
-
-	            builder.addResponse(
-	                    certId,
-	                    status,
-	                    new Date(),   // thisUpdate
-	                    null,         // nextUpdate
-	                    null
-	            );
-
-
-	            ContentSigner signer =
-	                    new JcaContentSignerBuilder("SHA256withRSA")
-	                            .build(issuerKey);
-
-	            BasicOCSPResp basicResp =
-	                    builder.build(signer, null, new Date());
-
-	            OCSPRespBuilder respBuilder = new OCSPRespBuilder();
-	            OCSPResp ocspResp =
-	                    respBuilder.build(OCSPRespBuilder.SUCCESSFUL, basicResp);
-
-	            return ocspResp.getEncoded();
-
-	        } catch (Exception e) {
-	            throw new IllegalStateException("Failed to build OCSP response", e);
-	        }
-	    }
 }

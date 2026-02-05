@@ -1,6 +1,6 @@
 package com.bezbednost.sertifikat.model;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -42,10 +42,10 @@ public class Csr {
 	    private String publicKey;         // public key as string
 
 	    @Column(nullable = false)
-	    private Instant expiresAt;           // requested certificate expiration
+	    private LocalDateTime expiresAt;           // requested certificate expiration
 
 	    @Column(nullable = false)
-	    private Instant issuedAt;
+	    private LocalDateTime issuedAt;
 	    
 	    @Column(nullable = false)
 	    private Long intermediateCaId;       // CA that will sign

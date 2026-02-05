@@ -1,6 +1,6 @@
 package com.bezbednost.sertifikat.dto;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -15,5 +15,5 @@ public class CsrDTO {
     public Long intermediateCaId;
 
     @NotNull
-    public Instant expiresAt; // certificate desired expiration
+    public LocalDateTime expiresAt; // certificate desired expiration
 }

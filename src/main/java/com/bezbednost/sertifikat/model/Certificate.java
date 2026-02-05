@@ -1,57 +1,50 @@
 package com.bezbednost.sertifikat.model;
 
-import java.math.BigInteger;
-import java.time.Instant;
-
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import lombok.AllArgsConstructor;
+import jakarta.persistence.*;
 import lombok.Data;
-import lombok.NoArgsConstructor;
+import java.time.LocalDateTime;
+
+import com.bezbednost.sertifikat.entity.User;
 
 @Entity
-@Table(name = "certificates")
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class Certificate {
-	@Id
+    @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Subject fields
-    @Column(nullable = false)
-    private String commonName;           
-    private String organization;         
-    private String organizationalUnit;   
-    private String country;              
-    private String state;                
-    private String locality;             
+    @Column(unique = true, nullable = false)
+    private String serialNumber;
+
+    @Column(unique = true, nullable = false)
+    private String alias;
 
     @Column(nullable = false)
-    private Instant issuedAt;            // certificate issuance timestamp
+    private String issuerSerialNumber;
+
+    @Column(nullable = false, length = 1024)
+    private String subjectDN;
 
     @Column(nullable = false)
-    private Instant expiresAt;           // certificate expiration
+    private LocalDateTime validFrom;
 
     @Column(nullable = false)
-    private String publicKey;            // public key as string from CSR
+    private LocalDateTime validTo;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private CertificateType type;        // ROOT / INTERMEDIATE / END_ENTITY
+    private CertificateType type;
 
-    private Long issuerId;               // parent certificate (null for root)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id")
+    private User owner;
 
-    @Column(nullable = false)
-    private boolean revoked;             // revocation status
-    
-    @Column(nullable = false, unique = true)
-    private BigInteger serialNumber; // unique X.509 serial number
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "keystore_id")
+    private Keystore keystore;
+
+    private boolean revoked = false;
+    private LocalDateTime revocationDate;
+    private String revocationReason;
 }
+
