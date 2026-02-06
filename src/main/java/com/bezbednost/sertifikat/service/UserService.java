@@ -206,6 +206,10 @@ public class UserService {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         Jwt jwt = (Jwt) authentication.getPrincipal();
 
+        if(jwt.getClaimAsString("mustChangePassword").equals("true")){
+            throw new IllegalStateException("Ne mozete vise da menjate sifru!");
+        }
+
         // 2. Izvlačimo email (privremena promenljiva)
         String tempEmail = jwt.getClaimAsString("email");
 
