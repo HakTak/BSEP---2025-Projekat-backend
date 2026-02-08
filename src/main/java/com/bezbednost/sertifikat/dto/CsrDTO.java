@@ -12,7 +12,7 @@ public class CsrDTO {
     public String csrPem;
 
     @NotNull
-    public Long intermediateCaId;
+    public String issuerSerialNumber;
 
     @NotNull
     public LocalDateTime expiresAt; // certificate desired expiration

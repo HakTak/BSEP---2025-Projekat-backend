@@ -23,7 +23,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Csr {
-	 @Id
+	 	@Id
 	    @GeneratedValue(strategy = GenerationType.IDENTITY)
 	    private Long id;
 
@@ -34,8 +34,7 @@ public class Csr {
 	    private String organization;         // O
 	    private String organizationalUnit;   // OU
 	    private String country;              // C
-	    private String state;                // ST
-	    private String locality;             // L
+	    private String email;             // L
 
 	    @Lob
 	    @Column(nullable = false)
@@ -48,7 +47,7 @@ public class Csr {
 	    private LocalDateTime issuedAt;
 	    
 	    @Column(nullable = false)
-	    private Long intermediateCaId;       // CA that will sign
+	    private String issuerSerialNumber;       // CA that will sign
 
 	    @Enumerated(EnumType.STRING)
 	    private CsrStatus status;            // PENDING / APPROVED  / REJECTED

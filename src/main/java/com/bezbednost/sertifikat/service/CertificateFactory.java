@@ -1,6 +1,5 @@
 package com.bezbednost.sertifikat.service;
 
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.AccessDescription;
 import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
@@ -8,7 +7,6 @@ import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.KeyUsage;
-import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.ContentSigner;
@@ -29,7 +27,7 @@ public class CertificateFactory {
         PublicKey subjectPublicKey, PrivateKey issuerPrivateKey,
         ZonedDateTime validFrom, ZonedDateTime validTo,
         BigInteger serialNumber,
-        boolean isCa, int keyUsage) throws Exception {
+        boolean isCa, int keyUsage, String issuerSerial) throws Exception {
 
     JcaX509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
             issuer, 
@@ -44,17 +42,23 @@ public class CertificateFactory {
     certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
     if (!isCa) {
 
-        String ocspUrl = "http://localhost:8080/api/check";
+        String ocspUrl = "https://localhost:8443/api/certificates/check";
 
         AccessDescription ocspAccess = new AccessDescription(AccessDescription.id_ad_ocsp,
         		new GeneralName(
                 GeneralName.uniformResourceIdentifier,
                 ocspUrl
         ));
+        
+        String issuerUrl = "https://localhost:8443/api/certificates/download/" + issuerSerial;
+        AccessDescription caIssuerAccess = new AccessDescription(
+                AccessDescription.id_ad_caIssuers,
+                new GeneralName(GeneralName.uniformResourceIdentifier, issuerUrl)
+        );
 
-        AuthorityInformationAccess aia =
-                new AuthorityInformationAccess(ocspAccess);
 
+        AuthorityInformationAccess aia = new AuthorityInformationAccess(new AccessDescription[]{ocspAccess, caIssuerAccess});
+        
         certBuilder.addExtension(
                 Extension.authorityInfoAccess,
                 false,

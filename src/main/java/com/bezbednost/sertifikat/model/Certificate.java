@@ -22,8 +22,20 @@ public class Certificate {
     @Column(nullable = false)
     private String issuerSerialNumber;
 
-    @Column(nullable = false, length = 1024)
-    private String subjectDN;
+    @Column(nullable = false)
+    private String commonName;          
+
+    @Column(nullable = false)
+    private String organization; 
+    
+    @Column(nullable = false)
+    private String organizationalUnit; 
+    
+    @Column(nullable = false)
+    private String country;     
+    @Column(nullable = false)
+    
+    private String email;        
 
     @Column(nullable = false)
     private LocalDateTime validFrom;

@@ -13,6 +13,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -47,11 +50,18 @@ public class CertificateController {
         }
     }
 
-    @GetMapping
+    @GetMapping("/getAll")
     public ResponseEntity<?> getAll() {
+    	Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    	com.bezbednost.sertifikat.entity.User user = (com.bezbednost.sertifikat.entity.User) authentication.getPrincipal();
         try {
-            List<String> serialNumbers = certificateService.getAllCertificateSerialNumbers();
-            return new ResponseEntity<>(serialNumbers, HttpStatus.OK);
+        	List<CertificateDetailsDTO> dtos =
+        	        certificateService.getAll(user)
+        	                .stream()
+        	                .map(cert -> new CertificateDetailsDTO(cert
+        	                ))
+        	                .toList();
+            return new ResponseEntity<>(dtos, HttpStatus.OK);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -82,17 +92,18 @@ public class CertificateController {
     }
     
     @GetMapping(
-            value = "/check",
-            produces = "application/ocsp-response"
-        )
-        public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
+    	    value = "/check",
+    	    consumes = "application/ocsp-request",
+    	    produces = "application/ocsp-response"
+    	)
+    	public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
 
-        	byte[] responseBytes = certificateService.handleOcspRequest(requestBytes);
+    	    byte[] responseBytes = certificateService.handleOcspRequest(requestBytes);
 
-            return ResponseEntity.ok()
-                    .header("Content-Type", "application/ocsp-response")
-                    .body(responseBytes);
-        }
+    	    return ResponseEntity.ok()
+    	            .contentType(MediaType.parseMediaType("application/ocsp-response"))
+    	            .body(responseBytes);
+    	}
         
      @PutMapping("/revoke")
      public ResponseEntity<?> revoke(@RequestBody RevocationRequest revocationRequest){

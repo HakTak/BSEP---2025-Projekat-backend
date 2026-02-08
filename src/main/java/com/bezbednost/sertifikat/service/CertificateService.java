@@ -58,7 +58,6 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -92,7 +91,7 @@ public class CertificateService {
                 subjectAndIssuer, subjectAndIssuer,
                 keyPair.getPublic(), keyPair.getPrivate(),
                 dto.getValidFrom(), dto.getValidTo(),
-                serialNumber, true, KeyUsage.keyCertSign | KeyUsage.cRLSign
+                serialNumber, true, KeyUsage.keyCertSign | KeyUsage.cRLSign, serialNumber.toString()
         );
 
         String alias = serialNumber.toString();
@@ -138,7 +137,7 @@ public class CertificateService {
         subjectName, issuerName,
         subjectKeyPair.getPublic(), issuerPrivateKey,
         dto.getValidFrom(), dto.getValidTo(),
-        serialNumber, isCa, keyUsage
+        serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber()
     );
 
     // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
@@ -226,7 +225,12 @@ public class CertificateService {
         Certificate certEntity = new Certificate();
         certEntity.setSerialNumber(cert.getSerialNumber().toString());
         certEntity.setAlias(cert.getSerialNumber().toString());
-        certEntity.setSubjectDN(cert.getSubjectX500Principal().getName());
+        X500Name x500 = new X500Name(cert.getSubjectX500Principal().getName());
+        certEntity.setCommonName(getRdnValue(x500, BCStyle.CN));
+        certEntity.setOrganization(getRdnValue(x500, BCStyle.O));
+        certEntity.setOrganizationalUnit(getRdnValue(x500, BCStyle.OU));
+        certEntity.setCountry(getRdnValue(x500, BCStyle.C));
+        certEntity.setEmail(getRdnValue(x500, BCStyle.EmailAddress));      
         certEntity.setValidFrom(cert.getNotBefore().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
         certEntity.setValidTo(cert.getNotAfter().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
         certEntity.setType(type);
@@ -257,11 +261,11 @@ public class CertificateService {
     return true;
 }
 
-    public List<String> getAllCertificateSerialNumbers() {
-        return certificateRepository.findAll()
-                .stream()
-                .map(Certificate::getSerialNumber)
-                .collect(Collectors.toList());
+    public List<Certificate> getAll(User user) {
+    	if (user.getRole() == UserRole.ADMIN)
+    		return certificateRepository.findAll();
+    	else
+    		return certificateRepository.findByOwnerId(user.getId());
     }
 
     public Certificate getCertificateBySerialNumber(String serialNumber) {
@@ -308,75 +312,66 @@ public class CertificateService {
     
     public byte[] buildOcspResponse(String serialNumber) throws Exception {
 
-        Certificate cert = certificateRepository.findBySerialNumber(serialNumber).orElseThrow(() 
-        		-> new IllegalArgumentException("Certificate not found"));
-        
-        var password = cryptoService.decryptAES(cert.getKeystore().getEncryptedPassword());
-        
-        X509Certificate issuerCert =
-                (X509Certificate) keystoreService.getCertificate(cert.getKeystore().getId(),
-                		password.toCharArray(), cert.getAlias());
+    	Certificate eeCert = certificateRepository.findBySerialNumber(serialNumber.toString())
+    	            .orElseThrow(() -> new IllegalArgumentException("EE Certificate not found"));
 
-        PrivateKey issuerKey =
-                keystoreService.getPrivateKey(cert.getKeystore().getId(),
-                		password.toCharArray(), cert.getAlias());
+	    // 2️⃣ Load the ISSUER certificate (important!)
+	    Certificate issuerCertRecord = certificateRepository.findBySerialNumber(eeCert.getIssuerSerialNumber())
+	            .orElseThrow(() -> new IllegalArgumentException("Issuer certificate not found"));
 
-        try {
-            X509CertificateHolder issuerHolder =
-                    new X509CertificateHolder(issuerCert.getEncoded());
+	    // 3️⃣ Decrypt keystore password
+	    String password = cryptoService.decryptAES(issuerCertRecord.getKeystore().getEncryptedPassword());
 
-            DigestCalculator digestCalculator =
-                    new JcaDigestCalculatorProviderBuilder()
-                            .build()
-                            .get(CertificateID.HASH_SHA1);
+	    // 4️⃣ Load issuer certificate and private key
+	    X509Certificate issuerCert = (X509Certificate) keystoreService.getCertificate(
+	            issuerCertRecord.getKeystore().getId(),
+	            password.toCharArray(),
+	            issuerCertRecord.getAlias()
+	    );
 
-            CertificateID certId = new CertificateID(
-                    digestCalculator,
-                    issuerHolder,
-                    new BigInteger(cert.getSerialNumber())
-            );
+	    PrivateKey issuerKey = keystoreService.getPrivateKey(
+	            issuerCertRecord.getKeystore().getId(),
+	            password.toCharArray(),
+	            issuerCertRecord.getAlias()
+	    );
 
-            CertificateStatus status =
-                    cert.isRevoked()
-                            ? new RevokedStatus(new Date(), CRLReason.privilegeWithdrawn)
-                            : CertificateStatus.GOOD;
+	    // 5️⃣ Build OCSP response
+	    X509CertificateHolder issuerHolder = new X509CertificateHolder(issuerCert.getEncoded());
 
-            BasicOCSPRespBuilder builder =
-                    new BasicOCSPRespBuilder(
-                            issuerHolder.getSubjectPublicKeyInfo(),
-                            digestCalculator
-                    );
+	    DigestCalculator digestCalculator = new JcaDigestCalculatorProviderBuilder()
+	            .build()
+	            .get(CertificateID.HASH_SHA1);
 
-            builder.addResponse(
-                    certId,
-                    status,
-                    new Date(),   
-                    null,        
-                    null
-            );
+	    CertificateID certID = new CertificateID(
+	            digestCalculator,
+	            issuerHolder,
+	            new BigInteger(eeCert.getSerialNumber())
+	    );
 
+	    // Determine certificate status
+	    CertificateStatus status = eeCert.isRevoked()
+	            ? new RevokedStatus(new Date(), CRLReason.privilegeWithdrawn)
+	            : CertificateStatus.GOOD;
 
-            ContentSigner signer =
-                    new JcaContentSignerBuilder("SHA256withRSA")
-                            .build(issuerKey);
+	    // Build basic OCSP response
+	    BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(
+	            issuerHolder.getSubjectPublicKeyInfo(),
+	            digestCalculator
+	    );
+	    builder.addResponse(certID, status, new Date(), null, null);
 
-            BasicOCSPResp basicResp =
-                    builder.build(signer, null, new Date());
+	    ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(issuerKey);
+	    BasicOCSPResp basicResp = builder.build(signer, null, new Date());
 
-            OCSPRespBuilder respBuilder = new OCSPRespBuilder();
-            OCSPResp ocspResp =
-                    respBuilder.build(OCSPRespBuilder.SUCCESSFUL, basicResp);
+	    OCSPRespBuilder respBuilder = new OCSPRespBuilder();
+	    OCSPResp ocspResp = respBuilder.build(OCSPRespBuilder.SUCCESSFUL, basicResp);
 
-            return ocspResp.getEncoded();
-
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to build OCSP response", e);
-        }
+	    return ocspResp.getEncoded();
     }
     
     public Csr submitCsr(CsrDTO csrDTO) throws Exception {
 
-        Certificate ca = certificateRepository.findById(csrDTO.intermediateCaId)
+        Certificate ca = certificateRepository.findBySerialNumber(csrDTO.getIssuerSerialNumber())
                 .orElseThrow(() -> new IllegalArgumentException("Intermediate CA not found"));
         
         validateIssuer(ca.getSerialNumber());
@@ -387,13 +382,11 @@ public class CertificateService {
         PKCS10CertificationRequest csrObj = parse(csrDTO.csrPem);
         X500Name x500 = csrObj.getSubject();
 
-        // Extract X500Name fields
         String cn  = getRdnValue(x500, BCStyle.CN);
         String o   = getRdnValue(x500, BCStyle.O);
         String ou  = getRdnValue(x500, BCStyle.OU);
         String c   = getRdnValue(x500, BCStyle.C);
-        String st  = getRdnValue(x500, BCStyle.ST);
-        String l   = getRdnValue(x500, BCStyle.L);
+        String e   = getRdnValue(x500, BCStyle.EmailAddress);
 
         String publicKeyPem = getPublicKey(csrObj);
 
@@ -402,11 +395,10 @@ public class CertificateService {
                 .organization(o)
                 .organizationalUnit(ou)
                 .country(c)
-                .state(st)
-                .locality(l)
+                .email(e)
                 .publicKey(publicKeyPem)
                 .expiresAt(csrDTO.expiresAt)
-                .intermediateCaId(1L)
+                .issuerSerialNumber(csrDTO.getIssuerSerialNumber())
                 .issuedAt(LocalDateTime.now())
                 .status(CsrStatus.PENDING)
                 .build();
@@ -447,11 +439,19 @@ public class CertificateService {
 	}
 	
 	public Certificate revoke(String serialNumber, String revokeReason) {
-		 Certificate c = certificateRepository.findBySerialNumber(serialNumber)
-	                .orElseThrow(() -> new IllegalArgumentException("Certificate not found"));
-		 c.setRevoked(true);
-		 c.setRevocationDate(LocalDateTime.now());
-		 c.setRevocationReason(revokeReason);
-		 return c;
+		 List<Certificate> certs = certificateRepository.findAll();
+		 return recursiveRevoke(serialNumber, revokeReason, certs);
+	}
+	
+	private Certificate recursiveRevoke(String parentSerialNumber, String revokeReason, List<Certificate> certificates) {
+		Certificate certificate = certificates.stream().filter(c->c.getSerialNumber().equals(parentSerialNumber)).findFirst().orElse(null);
+		certificate.setRevoked(true);
+		certificate.setRevocationDate(LocalDateTime.now());
+		certificate.setRevocationReason(revokeReason);
+		certificateRepository.save(certificate);
+		List<Certificate> childrenCerts = certificates.stream().filter(cert->cert.getIssuerSerialNumber().equals(parentSerialNumber)).toList();
+		for (Certificate cert: childrenCerts) 
+			recursiveRevoke(cert.getSerialNumber(), revokeReason, certificates);
+		return certificate;
 	}
 }

@@ -5,7 +5,7 @@ import com.bezbednost.sertifikat.entity.ActivationToken;
 import com.bezbednost.sertifikat.entity.PasswordResetToken;
 import com.bezbednost.sertifikat.entity.User;
 import com.bezbednost.sertifikat.entity.UserRole;
-import com.bezbednost.sertifikat.util.PasswordGenerator;
+import com.bezbednost.sertifikat.utils.PasswordGenerator;
 import com.bezbednost.sertifikat.repository.ActivationTokenRepository;
 import com.bezbednost.sertifikat.repository.PasswordResetTokenRepository;
 import com.bezbednost.sertifikat.repository.UserRepository;
@@ -100,7 +100,7 @@ public class UserService {
         
         // Slanje aktivacionog emaila
         try {
-            emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
+            //emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
         } catch (Exception e) {
             userRepository.delete(user);
             throw new RuntimeException("Greška pri slanju aktivacionog emaila. Pokušajte ponovo.");

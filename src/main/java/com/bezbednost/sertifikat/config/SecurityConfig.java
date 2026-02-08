@@ -48,7 +48,7 @@ public class SecurityConfig {
 
                 // 4. AUTORIZACIJA PUTANJA
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("\"/api/auth/register\", \"/api/auth/activate\", \"/api/auth/forgot-password\", \"/api/auth/reset-password\", \"/swagger-ui.html\", \"/v3/api-docs/**\", \"/swagger-ui/**").permitAll()
+                        .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .anyRequest().authenticated()
                 )
 

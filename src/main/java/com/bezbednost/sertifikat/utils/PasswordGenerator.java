@@ -1,4 +1,4 @@
-package com.bezbednost.sertifikat.util; // Ili com.bezbednost.sertifikat.service
+package com.bezbednost.sertifikat.utils; // Ili com.bezbednost.sertifikat.service
 
 import org.springframework.stereotype.Component;
 import java.security.SecureRandom;
