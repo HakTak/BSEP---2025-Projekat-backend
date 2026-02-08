@@ -48,4 +48,4 @@ build/
 *.log
 
 #properties
-*.properties
+*.propertiessrc/main/java/com/bezbednost/sertifikat/config/KeycloakConfig.java

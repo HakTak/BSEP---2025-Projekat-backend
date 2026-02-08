@@ -46,9 +46,19 @@ public class SecurityConfig {
                 // 3. SESSION MANAGEMENT (Stateless)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-                // 4. AUTORIZACIJA PUTANJA
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register", "/api/auth/activate", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        // Ovi endpointi moraju biti javni (bez tokena)
+                        .requestMatchers(
+                                "/api/auth/login",            // <--- OVO TI JE FALILO!
+                                "/api/auth/register",
+                                "/api/auth/activate",
+                                "/api/auth/forgot-password",
+                                "/api/auth/reset-password",
+                                "/swagger-ui.html",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/api/certificates/download"
+                        ).permitAll()
                         .anyRequest().authenticated()
                 )
 
