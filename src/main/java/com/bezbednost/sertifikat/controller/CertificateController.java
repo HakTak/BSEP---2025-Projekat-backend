@@ -43,7 +43,7 @@ public class CertificateController {
     @PostMapping("/issue")
     public ResponseEntity<?> issueCertificate(@RequestBody CertificateIssueDTO dto) {
         try {
-            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueCertificate(dto);
+            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueCertificate(dto,dto.getTemplateId());
             return new ResponseEntity<>(new CertificateDetailsDTO(cert), HttpStatus.CREATED);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);

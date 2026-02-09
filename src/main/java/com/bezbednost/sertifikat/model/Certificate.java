@@ -58,5 +58,11 @@ public class Certificate {
     private boolean revoked = false;
     private LocalDateTime revocationDate;
     private String revocationReason;
+
+    @Column(nullable = true)
+    private Integer keyUsageBitmask;
+
+    @Column(nullable = true, columnDefinition = "TEXT")
+    private String extendedKeyUsageOids;
 }
 

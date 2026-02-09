@@ -6,9 +6,11 @@ import com.bezbednost.sertifikat.entity.*;
 import com.bezbednost.sertifikat.exception.CertificateValidationException;
 import com.bezbednost.sertifikat.exception.ResourceNotFoundException;
 import com.bezbednost.sertifikat.model.Certificate;
+import com.bezbednost.sertifikat.model.CertificateTemplate;
 import com.bezbednost.sertifikat.model.CertificateType;
 import com.bezbednost.sertifikat.model.Csr;
 import com.bezbednost.sertifikat.model.CsrStatus;
+import com.bezbednost.sertifikat.service.CertificateTemplateService;
 import com.bezbednost.sertifikat.model.Keystore;
 import com.bezbednost.sertifikat.repository.CertificateRepository;
 import com.bezbednost.sertifikat.repository.CsrRepository;
@@ -44,6 +46,7 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemReader;
 import org.springframework.stereotype.Service;
+import java.time.temporal.ChronoUnit;  // ZA calculateTtlInDays()
 
 import java.io.IOException;
 import java.io.StringReader;
@@ -55,6 +58,7 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
@@ -70,7 +74,8 @@ public class CertificateService {
     private final KeystoreService keystoreService;
     private final CertificateFactory certificateFactory;
     private final CsrRepository csrRepository;
-    
+    private final CertificateTemplateService certificateTemplateService;
+
     @Transactional
     public Certificate issueRootCertificate(Long adminId, CertificateIssueDTO dto) throws Exception {
         User admin = userRepository.findById(adminId).orElseThrow(() -> new ResourceNotFoundException("Admin not found"));
@@ -103,11 +108,41 @@ public class CertificateService {
     }
 
     @Transactional
-    public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
+public Certificate issueCertificate(CertificateIssueDTO dto, Long templateId) throws Exception {
     // 1. Validacija izdavaoca
     Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber());
     User subjectUser = userRepository.findById(dto.getSubjectUserId())
             .orElseThrow(() -> new ResourceNotFoundException("Subject user not found"));
+
+    // 🆕 NOVO: Učitaj šablon ako je prosleđen
+    CertificateTemplate template = null;
+    if (templateId != null) {
+        template = certificateTemplateService.getTemplateEntity(templateId);
+    }
+
+    // 🆕 NOVO: Validacija prema šablonu
+    if (template != null) {
+
+        certificateTemplateService.validateCertificateRequest(
+                dto.getCommonName(),
+                dto.getSubjectAltName(),  // Ili whatever je polje za SAN
+                calculateTtlInDays(dto.getValidFrom(), dto.getValidTo()),
+                issuerCertData,
+                dto.getTemplateId(),
+                getKeyUsageFromDto(dto),  // Trebate ova dva helpersa
+                template.getExtendedKeyUsageOids() != null ?
+                    dto.getExtendedKeyUsageOids() : template.getExtendedKeyUsageOids()
+        );
+        
+        // 🆕 NOVO: Primeni vrednosti iz šablona ako nisu specificirane
+        if (dto.getKeyUsageBitmask() == null && template.getKeyUsageBitmask() != null) {
+            dto.setKeyUsageBitmask(template.getKeyUsageBitmask());
+        }
+
+        if (dto.getExtendedKeyUsageOids() == null && template.getExtendedKeyUsageOids() != null) {
+            dto.setExtendedKeyUsageOids(template.getExtendedKeyUsageOids());
+        }
+    }
 
     // 2. Učitavanje ključa i lanca roditelja
     Keystore keystore = issuerCertData.getKeystore();
@@ -120,7 +155,7 @@ public class CertificateService {
         throw new CertificateValidationException("Neuspešno učitavanje lanca izdavaoca.");
     }
     
-    // KLJUČNA STVAR: Uzimamo X500Name direktno iz encoded forme roditelja da izbegnemo String mismatch
+    // KLJUČNA STVAR: Uzimamo X500Name direktno iz encoded forme roditelja
     X509Certificate issuerCertX509 = (X509Certificate) issuerChain[0];
     X500Name issuerName = X500Name.getInstance(issuerCertX509.getSubjectX500Principal().getEncoded());
 
@@ -130,26 +165,46 @@ public class CertificateService {
     BigInteger serialNumber = new BigInteger(128, new SecureRandom());
     
     boolean isCa = subjectUser.getRole() == UserRole.ADMIN || subjectUser.getRole() == UserRole.CA_USER;
+    
+    // 🆕 NOVO: Koristi Key Usage iz šablona ako postoji, inače default
     int keyUsage = isCa ? KeyUsage.keyCertSign | KeyUsage.cRLSign : KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+    if (template != null && template.getKeyUsageBitmask() != null) {
+        keyUsage = template.getKeyUsageBitmask();
+    }
 
-    // 4. Kreiranje sertifikata
-    X509Certificate newCert = certificateFactory.createCertificate(
-        subjectName, issuerName,
-        subjectKeyPair.getPublic(), issuerPrivateKey,
-        dto.getValidFrom(), dto.getValidTo(),
-        serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber()
-    );
+    // 4. Kreiraj sertifikat (sa ili bez šablonske validacije)
+    X509Certificate newCert;
+    if (template != null) {
+        // Koristi overload metodu sa template validacijom
+        newCert = certificateFactory.createCertificateWithTemplate(
+            subjectName, issuerName,
+            subjectKeyPair.getPublic(), issuerPrivateKey,
+            dto.getValidFrom(), dto.getValidTo(),
+            serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber(),
+            issuerCertData, templateId,
+            dto.getCommonName(), dto.getSubjectAltName(), 
+            calculateTtlInDays(dto.getValidFrom(), dto.getValidTo()),
+            template.getExtendedKeyUsageOids(),
+            certificateTemplateService
+        );
+    } else {
+        // Koristi običnu metodu bez šablona
+        newCert = certificateFactory.createCertificate(
+            subjectName, issuerName,
+            subjectKeyPair.getPublic(), issuerPrivateKey,
+            dto.getValidFrom(), dto.getValidTo(),
+            serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber()
+        );
+    }
 
     // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
     java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
-    newChain[0] = newCert; // Novi je na vrhu
-    System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
+    newChain[0] = newCert;
+    System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length);
 
     // 6. Snimanje u Keystore (p12 fajl)
     String alias = serialNumber.toString();
     var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
-    
-    // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
     ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
     keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
 
@@ -157,6 +212,27 @@ public class CertificateService {
     CertificateType type = isCa ? CertificateType.INTERMEDIATE : CertificateType.END_ENTITY;
     return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
 }
+
+    // NOVA HELPER METODA - Izračunaj TTL u danima
+    private Integer calculateTtlInDays(ZonedDateTime validFrom, ZonedDateTime validTo) {
+        return (int) java.time.temporal.ChronoUnit.DAYS.between(validFrom, validTo);
+    }
+
+    // NOVA HELPER METODA - Izvuci Key Usage iz DTO-a
+    private int getKeyUsageFromDto(CertificateIssueDTO dto) {
+        // Trebate dodati polje u CertificateIssueDTO
+        if (dto.getKeyUsageBitmask() != null) {
+            return dto.getKeyUsageBitmask();
+        }
+        // Default vrednost na osnovu tipa sertifikata
+        boolean isCa = dto.isCa();
+        if (isCa) {
+            return KeyUsage.keyCertSign | KeyUsage.cRLSign;
+        } else {
+            return KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+        }
+    }
+    
 
     private Certificate validateIssuer(String issuerSerial) throws Exception {
         Certificate issuer = certificateRepository.findBySerialNumber(issuerSerial)
@@ -210,16 +286,16 @@ public class CertificateService {
     }
 
     private void checkRevocationRecursive(Certificate cert) {
-    if (cert.isRevoked()) {
-        throw new CertificateValidationException("Sertifikat u lancu (" + cert.getSerialNumber() + ") je povučen!");
+        if (cert.isRevoked()) {
+            throw new CertificateValidationException("Sertifikat u lancu (" + cert.getSerialNumber() + ") je povučen!");
+        }
+        // Ako nije root, proveri njegovog roditelja
+        if (!cert.getType().equals(CertificateType.ROOT)) {
+            Certificate parent = certificateRepository.findBySerialNumber(cert.getIssuerSerialNumber())
+                .orElseThrow(() -> new ResourceNotFoundException("Parent not found"));
+            checkRevocationRecursive(parent);
+        }
     }
-    // Ako nije root, proveri njegovog roditelja
-    if (!cert.getType().equals(CertificateType.ROOT)) {
-        Certificate parent = certificateRepository.findBySerialNumber(cert.getIssuerSerialNumber())
-            .orElseThrow(() -> new ResourceNotFoundException("Parent not found"));
-        checkRevocationRecursive(parent);
-    }
-}
 
     private Certificate saveCertificateEntity(X509Certificate cert, User owner, Keystore keystore, CertificateType type, String issuerSerial) {
         Certificate certEntity = new Certificate();

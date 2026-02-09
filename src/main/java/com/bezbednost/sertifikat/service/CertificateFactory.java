@@ -12,6 +12,7 @@ import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.springframework.stereotype.Component;
+import com.bezbednost.sertifikat.model.Certificate;
 import java.math.BigInteger;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -29,50 +30,79 @@ public class CertificateFactory {
         BigInteger serialNumber,
         boolean isCa, int keyUsage, String issuerSerial) throws Exception {
 
-    JcaX509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
-            issuer, 
-            serialNumber,
-            Date.from(validFrom.toInstant()),
-            Date.from(validTo.toInstant()),
-            subject, 
-            subjectPublicKey);
+        JcaX509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
+                issuer, 
+                serialNumber,
+                Date.from(validFrom.toInstant()),
+                Date.from(validTo.toInstant()),
+                subject, 
+                subjectPublicKey);
 
-    // Važno: BasicConstraints mora biti kritična ekstenzija za CA
-    certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));
-    certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
-    if (!isCa) {
+        // Važno: BasicConstraints mora biti kritična ekstenzija za CA
+        certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));
+        certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
+        if (!isCa) {
 
-        String ocspUrl = "https://localhost:8443/api/certificates/check";
+            String ocspUrl = "https://localhost:8443/api/certificates/check";
 
-        AccessDescription ocspAccess = new AccessDescription(AccessDescription.id_ad_ocsp,
-        		new GeneralName(
-                GeneralName.uniformResourceIdentifier,
-                ocspUrl
-        ));
-        
-        String issuerUrl = "https://localhost:8443/api/certificates/download/" + issuerSerial;
-        AccessDescription caIssuerAccess = new AccessDescription(
-                AccessDescription.id_ad_caIssuers,
-                new GeneralName(GeneralName.uniformResourceIdentifier, issuerUrl)
-        );
+            AccessDescription ocspAccess = new AccessDescription(AccessDescription.id_ad_ocsp,
+            		new GeneralName(
+                    GeneralName.uniformResourceIdentifier,
+                    ocspUrl
+            ));
+            
+            String issuerUrl = "https://localhost:8443/api/certificates/download/" + issuerSerial;
+            AccessDescription caIssuerAccess = new AccessDescription(
+                    AccessDescription.id_ad_caIssuers,
+                    new GeneralName(GeneralName.uniformResourceIdentifier, issuerUrl)
+            );
 
+            AuthorityInformationAccess aia = new AuthorityInformationAccess(new AccessDescription[]{ocspAccess, caIssuerAccess});
+            
+            certBuilder.addExtension(
+                    Extension.authorityInfoAccess,
+                    false,
+                    aia
+            );
+        }
 
-        AuthorityInformationAccess aia = new AuthorityInformationAccess(new AccessDescription[]{ocspAccess, caIssuerAccess});
-        
-        certBuilder.addExtension(
-                Extension.authorityInfoAccess,
-                false,
-                aia
-        );
+        // Koristimo SHA256WithRSA
+        ContentSigner contentSigner = new JcaContentSignerBuilder("SHA256WithRSAEncryption")
+                .setProvider("BC")
+                .build(issuerPrivateKey);
+
+        return new JcaX509CertificateConverter()
+                .setProvider("BC")
+                .getCertificate(certBuilder.build(contentSigner));
     }
 
-    // Koristimo SHA256WithRSA
-    ContentSigner contentSigner = new JcaContentSignerBuilder("SHA256WithRSAEncryption")
-            .setProvider("BC") // Proveri da li je "BC" registrovan
-            .build(issuerPrivateKey);
+    /**
+     * Overload metoda sa template validacijom
+     */
+    public X509Certificate createCertificateWithTemplate(
+        X500Name subject, X500Name issuer,
+        PublicKey subjectPublicKey, PrivateKey issuerPrivateKey,
+        ZonedDateTime validFrom, ZonedDateTime validTo,
+        BigInteger serialNumber,
+        boolean isCa, int keyUsage, String issuerSerial,
+        Certificate issuerCertificate, Long templateId,
+        String commonName, String sanValue, Integer ttlInDays,
+        String extendedKeyUsageOids,
+        CertificateTemplateService templateService) throws Exception {
 
-    return new JcaX509CertificateConverter()
-            .setProvider("BC")
-            .getCertificate(certBuilder.build(contentSigner));
+        // Validacija prema šablonu i Issuer politici
+        templateService.validateCertificateRequest(
+                commonName,
+                sanValue,
+                ttlInDays,
+                issuerCertificate,
+                templateId,
+                keyUsage,
+                extendedKeyUsageOids
+        );
+
+        // Nakon validacije, kreiraj sertifikat
+        return createCertificate(subject, issuer, subjectPublicKey, issuerPrivateKey,
+                validFrom, validTo, serialNumber, isCa, keyUsage, issuerSerial);
     }
 }
