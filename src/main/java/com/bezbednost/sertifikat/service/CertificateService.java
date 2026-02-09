@@ -96,7 +96,8 @@ public class CertificateService {
                 subjectAndIssuer, subjectAndIssuer,
                 keyPair.getPublic(), keyPair.getPrivate(),
                 dto.getValidFrom(), dto.getValidTo(),
-                serialNumber, true, KeyUsage.keyCertSign | KeyUsage.cRLSign, serialNumber.toString()
+                serialNumber, true, KeyUsage.keyCertSign | KeyUsage.cRLSign, serialNumber.toString(),
+                dto.getSubjectAltName(), dto.getExtendedKeyUsageOids()
         );
 
         String alias = serialNumber.toString();
@@ -108,8 +109,9 @@ public class CertificateService {
     }
 
     @Transactional
-public Certificate issueCertificate(CertificateIssueDTO dto, Long templateId) throws Exception {
+public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
     // 1. Validacija izdavaoca
+    var templateId = dto.getTemplateId(); // Ovo polje treba dodati u CertificateIssueDTO
     Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber());
     User subjectUser = userRepository.findById(dto.getSubjectUserId())
             .orElseThrow(() -> new ResourceNotFoundException("Subject user not found"));
@@ -193,7 +195,8 @@ public Certificate issueCertificate(CertificateIssueDTO dto, Long templateId) th
             subjectName, issuerName,
             subjectKeyPair.getPublic(), issuerPrivateKey,
             dto.getValidFrom(), dto.getValidTo(),
-            serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber()
+            serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber(),
+            dto.getSubjectAltName(), dto.getExtendedKeyUsageOids()
         );
     }
 
