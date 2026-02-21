@@ -57,6 +57,6 @@ public class Certificate {
 
     private boolean revoked = false;
     private LocalDateTime revocationDate;
-    private String revocationReason;
+    private int revocationCode;
 }
 
