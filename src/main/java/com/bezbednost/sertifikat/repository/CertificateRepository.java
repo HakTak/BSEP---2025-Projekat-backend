@@ -12,5 +12,7 @@ import com.bezbednost.sertifikat.model.Certificate;
 public interface CertificateRepository extends JpaRepository<Certificate, Long> {
     Optional<Certificate> findBySerialNumber(String serialNumber);
     List<Certificate> findByOwnerId(Long id);
+    List<Certificate> findByIssuerSerialNumber(String issuerSerialNumber); // DODATO
+    List<Certificate> findByKeystoreId(Long keystoreId); // DODATO
 }
 

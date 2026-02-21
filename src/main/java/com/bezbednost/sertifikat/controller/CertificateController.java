@@ -66,6 +66,23 @@ public class CertificateController {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+    // DODATO: Endpoint za dobijanje svih sertifikata koje je izdao CA korisnik iz njegovg lanca
+    @GetMapping("/getAllForUser")
+    public ResponseEntity<?> getAllForUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        com.bezbednost.sertifikat.entity.User user = 
+            (com.bezbednost.sertifikat.entity.User) authentication.getPrincipal();
+        try {
+            List<CertificateDetailsDTO> dtos =
+                    certificateService.getAllForCaUser(user)
+                            .stream()
+                            .map(cert -> new CertificateDetailsDTO(cert))
+                            .toList();
+            return new ResponseEntity<>(dtos, HttpStatus.OK);
+        } catch (Exception e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 
     @GetMapping("/validate/{serialNumber}")
     public ResponseEntity<?> validate(@PathVariable String serialNumber) {

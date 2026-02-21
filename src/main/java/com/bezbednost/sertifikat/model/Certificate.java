@@ -25,15 +25,15 @@ public class Certificate {
     @Column(nullable = false)
     private String commonName;          
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String organization; 
     
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String organizationalUnit; 
     
-    @Column(nullable = false)
+    @Column(nullable = true)
     private String country;     
-    @Column(nullable = false)
+    @Column(nullable = true)
     
     private String email;        
 

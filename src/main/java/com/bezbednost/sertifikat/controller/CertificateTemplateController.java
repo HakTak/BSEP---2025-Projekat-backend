@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.bezbednost.sertifikat.dto.CertificateTemplateDTO;
+import com.bezbednost.sertifikat.dto.CreateCertificateTemplateRequest;
 import com.bezbednost.sertifikat.service.CertificateTemplateService;
 
 import java.util.List;
@@ -45,4 +46,27 @@ public class CertificateTemplateController {
         List<CertificateTemplateDTO> templates = certificateTemplateService.getAllTemplates();
         return ResponseEntity.ok(templates);
     }
+
+    @PostMapping
+public ResponseEntity<CertificateTemplateDTO> createTemplate(
+        @RequestBody CreateCertificateTemplateRequest request) {
+    CertificateTemplateDTO template = certificateTemplateService.createTemplate(request);
+    return ResponseEntity.status(HttpStatus.CREATED).body(template);
+}
+
+@PutMapping("/{templateId}")
+public ResponseEntity<CertificateTemplateDTO> updateTemplate(
+        @PathVariable Long templateId,
+        @RequestBody CreateCertificateTemplateRequest request) {
+    CertificateTemplateDTO template = certificateTemplateService.updateTemplate(templateId, request);
+    return ResponseEntity.ok(template);
+}
+
+@DeleteMapping("/{templateId}")
+public ResponseEntity<Void> deleteTemplate(@PathVariable Long templateId) {
+    certificateTemplateService.deleteTemplate(templateId);
+    return ResponseEntity.noContent().build();
+}
+
+    
 }

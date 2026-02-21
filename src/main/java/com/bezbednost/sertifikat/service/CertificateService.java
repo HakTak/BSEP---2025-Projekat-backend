@@ -206,9 +206,15 @@ public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
     System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length);
 
     // 6. Snimanje u Keystore (p12 fajl)
+    // Za CA sertifikate čuvamo privatni ključ i lanac.
+    // Za EE sertifikate čuvamo SAMO sertifikat (bez privatnog ključa).
     String alias = serialNumber.toString();
     var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
-    ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
+    if (isCa) {
+        ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
+    } else {
+        ks.setCertificateEntry(alias, newCert);
+    }
     keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
 
     // 7. Snimanje u bazu
@@ -345,6 +351,36 @@ public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
     		return certificateRepository.findAll();
     	else
     		return certificateRepository.findByOwnerId(user.getId());
+    }
+
+    /**
+     * Nova metoda za CA korisnika — vraća sve sertifikate iz lanca kojim CA upravlja.
+     * CA korisnik vidi sve sertifikate koji dele isti keystore sa njegovim sertifikatima.
+     */
+    public List<Certificate> getAllForCaUser(User user) {
+        if (user.getRole() == UserRole.ADMIN) {
+            return certificateRepository.findAll();
+        }
+
+        if (user.getRole() == UserRole.CA_USER) {
+            // Pronađi sve sertifikate koje ovaj CA korisnik poseduje
+            List<Certificate> ownedCerts = certificateRepository.findByOwnerId(user.getId());
+
+            // Skupi sve keystore ID-jeve kojima CA ima pristup
+            List<Long> keystoreIds = ownedCerts.stream()
+                    .map(cert -> cert.getKeystore().getId())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.toList());
+
+            // Vrati sve sertifikate iz tih keystorova (ceo lanac)
+            return keystoreIds.stream()
+                    .flatMap(ksId -> certificateRepository.findByKeystoreId(ksId).stream())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.toList());
+        }
+
+        // Obični korisnik vidi samo svoje
+        return certificateRepository.findByOwnerId(user.getId());
     }
 
     public Certificate getCertificateBySerialNumber(String serialNumber) {
