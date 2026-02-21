@@ -47,19 +47,23 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
                 .authorizeHttpRequests(auth -> auth
-                        // Ovi endpointi moraju biti javni (bez tokena)
-                        .requestMatchers(
-                                "/api/auth/login",            // <--- OVO TI JE FALILO!
-                                "/api/auth/register",
-                                "/api/auth/activate",
-                                "/api/auth/forgot-password",
-                                "/api/auth/reset-password",
-                                "/swagger-ui.html",
-                                "/swagger-ui/**",
-                                "/v3/api-docs/**",
-                                "/api/certificates/download"
-                        ).permitAll()
-                        .anyRequest().authenticated()
+                // Javni endpointi (samo ove rute!)
+                .requestMatchers(
+                        "/api/auth/login",
+                        "/api/auth/register",
+                        "/api/auth/activate",
+                        "/api/auth/forgot-password",
+                        "/api/auth/reset-password",
+
+                        "/swagger-ui.html",
+                        "/swagger-ui/**",
+                        "/v3/api-docs/**",
+
+                        "/api/certificates/download"
+                ).permitAll()
+
+                // Sve ostalo mora imati autentifikaciju
+                .anyRequest().authenticated()
                 )
 
                 // Konfiguracija za Keycloak (OAuth2 Resource Server)

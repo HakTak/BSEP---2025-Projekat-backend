@@ -124,15 +124,15 @@ public class CertificateController {
         
      @PutMapping("/revoke")
      public ResponseEntity<?> revoke(@RequestBody RevocationRequest revocationRequest){
-    	 return ResponseEntity.ok().body(certificateService.revoke(revocationRequest.getSerialNumber(), revocationRequest.getReason()));
-     }
+    	return ResponseEntity.ok().body(certificateService.revoke(revocationRequest.getSerialNumber(), revocationRequest.getReason()));
+    }
      
      @PostMapping("/submitCsr")
      public ResponseEntity<?> submitCsr(@RequestBody CsrDTO csrDTO){
-    	 try {
+    	try {
 			return ResponseEntity.ok().body(certificateService.submitCsr(csrDTO));
 		} catch (Exception e) {
 			 return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
 		}
-     }
+    }
 }

@@ -4,12 +4,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import com.bezbednost.sertifikat.dto.CertificateTemplateDTO;
 import com.bezbednost.sertifikat.dto.CreateCertificateTemplateRequest;
+import com.bezbednost.sertifikat.entity.UserRole;
 import com.bezbednost.sertifikat.exception.BadRequestException;
 import com.bezbednost.sertifikat.exception.NotFoundException;
 import com.bezbednost.sertifikat.model.Certificate;
 import com.bezbednost.sertifikat.model.CertificateTemplate;
 import com.bezbednost.sertifikat.repository.CertificateRepository;
 import com.bezbednost.sertifikat.repository.CertificateTemplateRepository;
+import com.bezbednost.sertifikat.entity.User;
+import com.bezbednost.sertifikat.entity.UserRole;
 
 import java.util.List;
 import java.util.regex.Pattern;
@@ -196,12 +199,22 @@ public class CertificateTemplateService {
     Certificate issuer = certificateRepository.findById(request.getIssuerId())
             .orElseThrow(() -> new NotFoundException("Issuer nije pronađen"));
 
+/* 
+    // Provera: Admin može sve, CA korisnik samo za svoje sertifikate
+    if (requestingUser.getRole() != UserRole.ADMIN) {
+        if (!issuer.getOwner().getId().equals(requestingUser.getId())) {
+            throw new BadRequestException("Nemate pravo da kreirate šablon za ovaj issuer sertifikat.");
+        }
+    }*/
+
     if (certificateTemplateRepository.findByNameAndIssuer(request.getName(), issuer).isPresent()) {
     throw new BadRequestException("Šablon sa ovim imenom već postoji za ovog Issuera");
 }
     // Validacija regex-a
-    validateRegexPattern(request.getCnRegex());
-    validateRegexPattern(request.getSanRegex());
+    validateRegexPattern(request.getCnRegex()); // CN je obavezan
+    if (request.getSanRegex() != null && !request.getSanRegex().isEmpty()) {
+        validateRegexPattern(request.getSanRegex()); // SAN je opcioni
+    }
 
     CertificateTemplate template = new CertificateTemplate();
     template.setName(request.getName());
@@ -220,7 +233,7 @@ public class CertificateTemplateService {
 
     private void validateRegexPattern(String regex) {
         if (regex == null || regex.isEmpty()) {
-            throw new BadRequestException("Regex ne može biti prazan");
+            return; // SAN regex je opcioni, preskačemo validaciju
         }
         try {
             Pattern.compile(regex);

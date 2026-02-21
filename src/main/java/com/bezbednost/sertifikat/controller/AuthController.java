@@ -42,7 +42,7 @@ public class AuthController {
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
     @PostMapping("/change-password")
-    @PreAuthorize("hasRole('CA_USER')")
+//    @PreAuthorize("hasRole('CA_USER')")
     public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
         userService.changeCaUserPassword(request);
         return ResponseEntity.ok(Map.of("message", "Lozinka uspešno promenjena"));
@@ -50,7 +50,7 @@ public class AuthController {
 
     // ACTIVATE - Aktivacija naloga
     @PostMapping("/activate")
-    @PreAuthorize("isAnonymous()")
+ //   @PreAuthorize("isAnonymous()")
     public ResponseEntity<Map<String, String>> activate(@RequestParam String token) {
         try {
             User user = userService.activateAccount(token);
