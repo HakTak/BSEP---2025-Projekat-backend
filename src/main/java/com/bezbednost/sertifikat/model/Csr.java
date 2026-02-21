@@ -2,15 +2,8 @@ package com.bezbednost.sertifikat.model;
 
 import java.time.LocalDateTime;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
-import jakarta.persistence.Table;
+import com.bezbednost.sertifikat.entity.User;
+import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -51,4 +44,9 @@ public class Csr {
 
 	    @Enumerated(EnumType.STRING)
 	    private CsrStatus status;            // PENDING / APPROVED  / REJECTED
+
+	@ManyToOne
+	@JoinColumn(name = "user_id")
+	private User user;
+
 }
