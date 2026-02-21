@@ -19,7 +19,7 @@ public class CertificateDetailsDTO {
     private LocalDateTime validTo;
     private String type;
     private boolean isRevoked;
-    private String revocationReason;
+    private int revocationCode;
 
     public CertificateDetailsDTO(Certificate cert) {
         this.id = cert.getId();
@@ -34,6 +34,6 @@ public class CertificateDetailsDTO {
         this.validTo = cert.getValidTo();
         this.type = cert.getType().name();
         this.isRevoked = cert.isRevoked();
-        this.revocationReason = cert.getRevocationReason();
+        this.revocationCode = cert.getRevocationCode();
     }
 }

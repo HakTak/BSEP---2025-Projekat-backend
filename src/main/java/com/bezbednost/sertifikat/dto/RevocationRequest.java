@@ -12,5 +12,5 @@ import lombok.NoArgsConstructor;
 @Builder
 public class RevocationRequest {
 	private String serialNumber;
-	private String reason;
+	private int revocationCode;
 }

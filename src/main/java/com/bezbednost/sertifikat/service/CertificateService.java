@@ -17,16 +17,22 @@ import com.bezbednost.sertifikat.repository.KeyStoreRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 
+import org.bouncycastle.asn1.ASN1GeneralizedTime;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import org.bouncycastle.asn1.ocsp.OCSPObjectIdentifiers;
+import org.bouncycastle.asn1.ocsp.RevokedInfo;
 import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x500.style.IETFUtils;
 import org.bouncycastle.asn1.x509.CRLReason;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.ocsp.BasicOCSPResp;
 import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
 import org.bouncycastle.cert.ocsp.CertificateID;
@@ -36,6 +42,7 @@ import org.bouncycastle.cert.ocsp.OCSPResp;
 import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
 import org.bouncycastle.cert.ocsp.Req;
 import org.bouncycastle.cert.ocsp.RevokedStatus;
+import org.bouncycastle.cert.ocsp.UnknownStatus;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.DigestCalculator;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
@@ -54,6 +61,8 @@ import java.math.BigInteger;
 import java.security.*;
 import java.security.cert.X509Certificate;
 import java.security.spec.X509EncodedKeySpec;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -572,82 +581,76 @@ public class CertificateService {
         return cert.getEncoded();
     }
     
-    public byte[] handleOcspRequest(byte[] requestBytes) {
-
+    public byte[] handleOcspRequest(byte[] requestBytes) throws Exception {
+        OCSPReq ocspReq;
         try {
-
-            OCSPReq ocspReq = new OCSPReq(requestBytes);
-
-            Req[] requests = ocspReq.getRequestList();
-
-            CertificateID certId = requests[0].getCertID();
-
-            BigInteger serial = certId.getSerialNumber();
-
-            return buildOcspResponse(serial.toString());
-
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+            ocspReq = new OCSPReq(requestBytes);
+        } catch (IOException e) {
+            return new OCSPRespBuilder().build(OCSPRespBuilder.MALFORMED_REQUEST, null).getEncoded();
         }
+
+        Req[] requests = ocspReq.getRequestList();
+        if (requests == null || requests.length == 0) {
+            return new OCSPRespBuilder().build(OCSPRespBuilder.MALFORMED_REQUEST, null).getEncoded();
+        }
+
+        Extension nonceExt = ocspReq.getExtension(OCSPObjectIdentifiers.id_pkix_ocsp_nonce);
+        CertificateID certId = requests[0].getCertID();
+
+        var certOpt = certificateRepository.findBySerialNumber(certId.getSerialNumber().toString());
+        if (certOpt.isEmpty()) {
+            return buildOcspResponse(null, certId, nonceExt, true, false);
+        }
+
+        Certificate cert = certOpt.get();
+        return buildOcspResponse(cert, certId, nonceExt, false, cert.isRevoked());
     }
     
-    public byte[] buildOcspResponse(String serialNumber) throws Exception {
+    public byte[] buildOcspResponse(Certificate eeCert, CertificateID certID, Extension nonce, boolean isUnknown, boolean isRevoked) throws Exception {
+        String issuerSerial = isUnknown ? null : eeCert.getIssuerSerialNumber();
 
-    	Certificate eeCert = certificateRepository.findBySerialNumber(serialNumber.toString())
-    	            .orElseThrow(() -> new IllegalArgumentException("EE Certificate not found"));
+        Certificate issuerRecord = certificateRepository.findBySerialNumber(issuerSerial)
+                .orElseThrow(() -> new Exception("Issuer certificate not found"));
 
-	    // 2️⃣ Load the ISSUER certificate (important!)
-	    Certificate issuerCertRecord = certificateRepository.findBySerialNumber(eeCert.getIssuerSerialNumber())
-	            .orElseThrow(() -> new IllegalArgumentException("Issuer certificate not found"));
+        String password = cryptoService.decryptAES(issuerRecord.getKeystore().getEncryptedPassword());
+        PrivateKey issuerKey = keystoreService.getPrivateKey(issuerRecord.getKeystore().getId(), password.toCharArray(), issuerRecord.getAlias());
+        X509Certificate issuerCert = (X509Certificate) keystoreService.getCertificate(issuerRecord.getKeystore().getId(), password.toCharArray(), issuerRecord.getAlias());
 
-	    // 3️⃣ Decrypt keystore password
-	    String password = cryptoService.decryptAES(issuerCertRecord.getKeystore().getEncryptedPassword());
+        CertificateStatus status;
+        if (isUnknown) {
+            status = new UnknownStatus();
+        } else if (isRevoked) {
+        	RevokedInfo revokedInfo = new RevokedInfo(
+        		    new ASN1GeneralizedTime(eeCert.getRevocationDate().toString()),
+        		    CRLReason.lookup(eeCert.getRevocationCode())
+        		);
+        		status = new RevokedStatus(revokedInfo);
+        } else {
+            status = CertificateStatus.GOOD;
+        }
 
-	    // 4️⃣ Load issuer certificate and private key
-	    X509Certificate issuerCert = (X509Certificate) keystoreService.getCertificate(
-	            issuerCertRecord.getKeystore().getId(),
-	            password.toCharArray(),
-	            issuerCertRecord.getAlias()
-	    );
+        Date now = new Date();
+        Date nextUpdate = Date.from(Instant.now().plus(Duration.ofHours(24)));
 
-	    PrivateKey issuerKey = keystoreService.getPrivateKey(
-	            issuerCertRecord.getKeystore().getId(),
-	            password.toCharArray(),
-	            issuerCertRecord.getAlias()
-	    );
+        BasicOCSPRespBuilder respBuilder = new BasicOCSPRespBuilder(
+                new JcaX509CertificateHolder(issuerCert).getSubjectPublicKeyInfo(),
+                new JcaDigestCalculatorProviderBuilder().setProvider("BC").build().get(CertificateID.HASH_SHA1)
+        );
 
-	    // 5️⃣ Build OCSP response
-	    X509CertificateHolder issuerHolder = new X509CertificateHolder(issuerCert.getEncoded());
+        respBuilder.addResponse(certID, status, now, nextUpdate, null);
 
-	    DigestCalculator digestCalculator = new JcaDigestCalculatorProviderBuilder()
-	            .build()
-	            .get(CertificateID.HASH_SHA1);
+        if (nonce != null) {
+            respBuilder.setResponseExtensions(new Extensions(nonce));
+        }
 
-	    CertificateID certID = new CertificateID(
-	            digestCalculator,
-	            issuerHolder,
-	            new BigInteger(eeCert.getSerialNumber())
-	    );
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").build(issuerKey);
+        BasicOCSPResp basicResp = respBuilder.build(
+                signer,
+                new X509CertificateHolder[]{ new JcaX509CertificateHolder(issuerCert) },
+                now
+        );
 
-	    // Determine certificate status
-	    CertificateStatus status = eeCert.isRevoked()
-	            ? new RevokedStatus(new Date(), CRLReason.privilegeWithdrawn)
-	            : CertificateStatus.GOOD;
-
-	    // Build basic OCSP response
-	    BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(
-	            issuerHolder.getSubjectPublicKeyInfo(),
-	            digestCalculator
-	    );
-	    builder.addResponse(certID, status, new Date(), null, null);
-
-	    ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(issuerKey);
-	    BasicOCSPResp basicResp = builder.build(signer, null, new Date());
-
-	    OCSPRespBuilder respBuilder = new OCSPRespBuilder();
-	    OCSPResp ocspResp = respBuilder.build(OCSPRespBuilder.SUCCESSFUL, basicResp);
-
-	    return ocspResp.getEncoded();
+        return new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basicResp).getEncoded();
     }
     
     public Csr submitCsr(CsrDTO csrDTO) throws Exception {
@@ -719,20 +722,28 @@ public class CertificateService {
 	    }
 	}
 	
-	public Certificate revoke(String serialNumber, String revokeReason) {
+	public Certificate revoke(String serialNumber, int revocationCode) {
 		 List<Certificate> certs = certificateRepository.findAll();
-		 return recursiveRevoke(serialNumber, revokeReason, certs);
+		 return recursiveRevoke(serialNumber, revocationCode, certs);
 	}
 	
-	private Certificate recursiveRevoke(String parentSerialNumber, String revokeReason, List<Certificate> certificates) {
+	private Certificate recursiveRevoke(String parentSerialNumber, int revocationCode, List<Certificate> certificates) {
 		Certificate certificate = certificates.stream().filter(c->c.getSerialNumber().equals(parentSerialNumber)).findFirst().orElse(null);
 		certificate.setRevoked(true);
 		certificate.setRevocationDate(LocalDateTime.now());
-		certificate.setRevocationReason(revokeReason);
+		certificate.setRevocationCode(revocationCode);
 		certificateRepository.save(certificate);
 		List<Certificate> childrenCerts = certificates.stream().filter(cert->cert.getIssuerSerialNumber().equals(parentSerialNumber)).toList();
 		for (Certificate cert: childrenCerts) 
-			recursiveRevoke(cert.getSerialNumber(), revokeReason, certificates);
+			recursiveRevoke(cert.getSerialNumber(), revocationCode, certificates);
 		return certificate;
+	}
+	
+	public List<Certificate> getAllCA(){
+		return certificateRepository.findAllCA();
+	}
+	
+	public List<Csr> getAllCACsr(Long userId){
+		return certificateRepository.findCsrsBySigningCaOwner(userId);
 	}
 }

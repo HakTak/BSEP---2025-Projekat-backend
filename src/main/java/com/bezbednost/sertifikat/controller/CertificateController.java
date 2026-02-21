@@ -11,11 +11,11 @@ import com.bezbednost.sertifikat.service.CertificateService;
 import com.bezbednost.sertifikat.service.UserService;
 import lombok.RequiredArgsConstructor;
 
+import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -98,6 +98,7 @@ public class CertificateController {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+    
 
     @GetMapping("/validate/{serialNumber}")
     public ResponseEntity<?> validate(@PathVariable String serialNumber) {
@@ -123,23 +124,31 @@ public class CertificateController {
         }
     }
     
-    @GetMapping(
+    @PostMapping(
     	    value = "/check",
     	    consumes = "application/ocsp-request",
     	    produces = "application/ocsp-response"
     	)
     	public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
-
-    	    byte[] responseBytes = certificateService.handleOcspRequest(requestBytes);
-
-    	    return ResponseEntity.ok()
-    	            .contentType(MediaType.parseMediaType("application/ocsp-response"))
-    	            .body(responseBytes);
+    	    try {
+    	        byte[] response = certificateService.handleOcspRequest(requestBytes);
+    	        return ResponseEntity.ok()
+    	                .contentType(MediaType.parseMediaType("application/ocsp-response"))
+    	                .body(response);
+    	    } catch (Exception e) {
+    	        try {
+    	            return ResponseEntity.ok()
+    	                    .contentType(MediaType.parseMediaType("application/ocsp-response"))
+    	                    .body(new OCSPRespBuilder().build(OCSPRespBuilder.INTERNAL_ERROR, null).getEncoded());
+    	        } catch (Exception fatal) {
+    	            return ResponseEntity.status(500).build();
+    	        }
+    	    }
     	}
         
      @PutMapping("/revoke")
      public ResponseEntity<?> revoke(@RequestBody RevocationRequest revocationRequest){
-    	 return ResponseEntity.ok().body(certificateService.revoke(revocationRequest.getSerialNumber(), revocationRequest.getReason()));
+    	 return ResponseEntity.ok().body(certificateService.revoke(revocationRequest.getSerialNumber(), revocationRequest.getRevocationCode()));
      }
      
      @PostMapping("/submitCsr")
@@ -149,5 +158,22 @@ public class CertificateController {
 		} catch (Exception e) {
 			 return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
 		}
+     }
+     @GetMapping("/getAllCA")
+     public ResponseEntity<?> getAllCA(){
+    	 List<CertificateDetailsDTO> dtos =
+    			 certificateService.getAllCA()
+    			 .stream()
+    			 .map(cert -> new CertificateDetailsDTO(cert
+    					 ))
+    			 .toList();
+    	 return new ResponseEntity<>(dtos, HttpStatus.OK);
+     }
+     
+     @GetMapping("/getAllCACsr")
+     public ResponseEntity<?> getAllCACsr(){
+    	 Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+     		com.bezbednost.sertifikat.entity.User user = (com.bezbednost.sertifikat.entity.User) authentication.getPrincipal();
+    	 return new ResponseEntity<>(certificateService.getAllCACsr(user.getId()), HttpStatus.OK);
      }
 }
