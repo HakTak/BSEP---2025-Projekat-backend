@@ -100,7 +100,7 @@ public class UserService {
         
         // Slanje aktivacionog emaila
         try {
-            //emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
+            emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
         } catch (Exception e) {
             userRepository.delete(user);
             throw new RuntimeException("Greška pri slanju aktivacionog emaila. Pokušajte ponovo.");
@@ -206,7 +206,10 @@ public class UserService {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         Jwt jwt = (Jwt) authentication.getPrincipal();
 
-        if(jwt.getClaimAsString("mustChangePassword").equals("true")){
+        String mustChangePassword = jwt.getClaimAsString("mustChangePassword");
+        System.out.println("mustChangePassword claim: " + mustChangePassword);
+
+        if ("false".equals(mustChangePassword)) {
             throw new IllegalStateException("Ne mozete vise da menjate sifru!");
         }
 
@@ -331,10 +334,16 @@ public class UserService {
     }
     
     // READ - Pronađi korisnika po email-u
-    public UserResponse getUserByEmail(String email) {
+    public UserResponse getUserDtoByEmail(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Korisnik sa email-om " + email + " nije pronađen"));
         return mapToUserResponse(user);
+    }
+
+    public User getUserByEmail(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Korisnik sa email-om " + email + " nije pronađen"));
+        return user;
     }
     
     // READ - Pronađi sve korisnike

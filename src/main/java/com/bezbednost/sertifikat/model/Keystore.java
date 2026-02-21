@@ -1,5 +1,6 @@
 package com.bezbednost.sertifikat.model;
 
+import com.bezbednost.sertifikat.entity.User;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -12,4 +13,8 @@ public class Keystore {
 
     @Column(nullable = false, length = 512)
     private String encryptedPassword;
+
+    @OneToOne
+    @JoinColumn(name = "user_id")
+    private User user;
 }

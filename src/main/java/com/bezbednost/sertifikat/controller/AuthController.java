@@ -2,6 +2,7 @@ package com.bezbednost.sertifikat.controller;
 
 import com.bezbednost.sertifikat.dto.*;
 import com.bezbednost.sertifikat.entity.User;
+import com.bezbednost.sertifikat.service.CertificateService;
 import com.bezbednost.sertifikat.service.KeycloakService;
 import com.bezbednost.sertifikat.service.UserService;
 import jakarta.validation.Valid;
@@ -25,6 +26,9 @@ public class AuthController {
     
     @Autowired
     private KeycloakService keycloakService;
+
+    @Autowired
+    private CertificateService certificateService;
     
     // CREATE - Registracija
     @PostMapping("/register")
@@ -36,11 +40,26 @@ public class AuthController {
     }
 
     @PostMapping("/register-ca")
-    @PreAuthorize("hasRole('ADMIN')") // <--- Samo Admin može ovo
-    public ResponseEntity<RegisterResponse> registerCA(@Valid @RequestBody CreateCARequest request) {
-        RegisterResponse response = userService.registerCAUser(request);
-        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> registerCA(@Valid @RequestBody RegisterCaCompositeRequest request) {
+        try {
+            // 1. Registrujemo korisnika
+            // Bitno: Neka ova metoda vrati kreiranog User-a ili njegov ID/Email
+            userService.registerCAUser(request.getUserRequest());
+            User newCaUser = userService.getUserByEmail(request.getUserRequest().getEmail());
+                    // 2. Kreiramo sertifikat za TOG NOVOG korisnika
+            // PAŽNJA: Ovde moraš paziti na logiku (vidi napomenu ispod)
+            com.bezbednost.sertifikat.model.Certificate cert = certificateService.createCACertKeystore(
+                    request.getCertificateRequest(),
+                    newCaUser // Prosleđujemo novog korisnika servisu!
+            );
+
+            return new ResponseEntity<>(new CertificateDetailsDTO(cert), HttpStatus.CREATED);
+        } catch (Exception e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
+        }
     }
+
     @PostMapping("/change-password")
     @PreAuthorize("hasRole('CA_USER')")
     public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
@@ -122,7 +141,7 @@ public class AuthController {
     // READ - Pronađi korisnika po email-u
     @GetMapping("/email/{email}")
     public ResponseEntity<UserResponse> getUserByEmail(@PathVariable String email) {
-        UserResponse response = userService.getUserByEmail(email);
+        UserResponse response = userService.getUserDtoByEmail(email);
         return new ResponseEntity<>(response, HttpStatus.OK);
     }
     

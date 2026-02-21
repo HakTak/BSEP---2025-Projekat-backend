@@ -4,8 +4,11 @@ import com.bezbednost.sertifikat.dto.CertificateDetailsDTO;
 import com.bezbednost.sertifikat.dto.CertificateIssueDTO;
 import com.bezbednost.sertifikat.dto.CsrDTO;
 import com.bezbednost.sertifikat.dto.RevocationRequest;
+import com.bezbednost.sertifikat.entity.User;
+import com.bezbednost.sertifikat.model.Certificate;
 import com.bezbednost.sertifikat.service.CertificateService;
 
+import com.bezbednost.sertifikat.service.UserService;
 import lombok.RequiredArgsConstructor;
 
 import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
@@ -13,8 +16,10 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,23 +31,35 @@ import java.util.Map;
 public class CertificateController {
 
     private final CertificateService certificateService;
+    private final UserService userService;
 
     @PostMapping("/issue-root")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> issueRoot(@RequestBody CertificateIssueDTO dto) {
         try {
-            // U realnoj aplikaciji, ID admina bi se dobio iz Spring Security Context-a
-            Long adminId = 1L; // Placeholder
-            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueRootCertificate(adminId, dto);
+            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueRootCertificate(dto);
             return new ResponseEntity<>(new CertificateDetailsDTO(cert), HttpStatus.CREATED);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
         }
     }
 
-    @PostMapping("/issue")
-    public ResponseEntity<?> issueCertificate(@RequestBody CertificateIssueDTO dto) {
+    @PostMapping("/issue-intermediate")
+    @PreAuthorize("hasRole('CA_USER') || hasRole('ADMIN')")
+    public ResponseEntity<?> issueIntermediateCertificate(@RequestBody CertificateIssueDTO dto) {
         try {
-            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueCertificate(dto);
+            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueIntermediateCertificate(dto);
+            return new ResponseEntity<>(new CertificateDetailsDTO(cert), HttpStatus.CREATED);
+        } catch (Exception e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    @PostMapping("/approve-csr/{csrId}")
+    @PreAuthorize("hasRole('CA_USER') || hasRole('ADMIN')")
+    public ResponseEntity<?> approveCsr(@PathVariable Long csrId) {
+        try {
+            Certificate cert = certificateService.issueE2ECertificate(csrId);
             return new ResponseEntity<>(new CertificateDetailsDTO(cert), HttpStatus.CREATED);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
@@ -50,9 +67,26 @@ public class CertificateController {
     }
 
     @GetMapping("/getAll")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> getAll() {
-    	Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-    	com.bezbednost.sertifikat.entity.User user = (com.bezbednost.sertifikat.entity.User) authentication.getPrincipal();
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String subjectEmail = email;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User user = userService.getUserByEmail(subjectEmail);
         try {
         	List<CertificateDetailsDTO> dtos =
         	        certificateService.getAll(user)

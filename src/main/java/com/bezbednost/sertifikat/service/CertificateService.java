@@ -50,23 +50,26 @@ import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemReader;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.SecureRandom;
+import java.security.*;
 import java.security.cert.X509Certificate;
+import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -81,17 +84,41 @@ public class CertificateService {
     private final CsrRepository csrRepository;
     
     @Transactional
-    public Certificate issueRootCertificate(Long adminId, CertificateIssueDTO dto) throws Exception {
-        User admin = userRepository.findById(adminId).orElseThrow(() -> new ResourceNotFoundException("Admin not found"));
-        if (admin.getRole() != UserRole.ADMIN) {
-            throw new SecurityException("Only admins can issue root certificates.");
+    public Certificate issueRootCertificate(CertificateIssueDTO dto) throws Exception {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
         }
 
-        String password = cryptoService.generateRandomPassword();
-        Keystore keystore = new Keystore();
-        keystore.setEncryptedPassword(cryptoService.encryptAES(password));
-        keystoreRepository.save(keystore);
-        
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String adminEmail = email;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User admin = userRepository.findByEmail(adminEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + adminEmail));
+
+        Keystore keystore;
+        String password;
+        Optional<Keystore> optionalKeystore = keystoreRepository.findByUser_Id(admin.getId());
+        if(optionalKeystore.isPresent()) {
+            keystore = optionalKeystore.get();
+            password = cryptoService.decryptAES(keystore.getEncryptedPassword());
+        }else{
+            password = cryptoService.generateRandomPassword();
+            keystore = new Keystore();
+            keystore.setEncryptedPassword(cryptoService.encryptAES(password));
+            keystore.setUser(admin);
+            keystoreRepository.save(keystore);
+        }
+
         KeyPair keyPair = cryptoService.generateRSAKeyPair();
         X500Name subjectAndIssuer = buildX500NameFromDto(dto);
         BigInteger serialNumber = new BigInteger(128, new SecureRandom());
@@ -112,65 +139,297 @@ public class CertificateService {
     }
 
     @Transactional
-    public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
-    // 1. Validacija izdavaoca
-    Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber());
-    User subjectUser = userRepository.findById(dto.getSubjectUserId())
-            .orElseThrow(() -> new ResourceNotFoundException("Subject user not found"));
+    public Certificate issueIntermediateCertificate(CertificateIssueDTO dto) throws Exception {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
 
-    // 2. Učitavanje ključa i lanca roditelja
-    Keystore keystore = issuerCertData.getKeystore();
-    String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
-    
-    PrivateKey issuerPrivateKey = keystoreService.getPrivateKey(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
-    java.security.cert.Certificate[] issuerChain = keystoreService.getCertificateChain(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
-    
-    if (issuerChain == null || issuerChain.length == 0) {
-        throw new CertificateValidationException("Neuspešno učitavanje lanca izdavaoca.");
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String subjectEmail = email;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User subjectUser = userRepository.findByEmail(subjectEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + subjectEmail));
+
+        // 1. Validacija izdavaoca
+        Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber(), subjectUser);
+
+        // 2. Učitavanje ključa i lanca roditelja
+        Keystore keystore = issuerCertData.getKeystore();
+        String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
+
+        PrivateKey issuerPrivateKey = keystoreService.getPrivateKey(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
+        java.security.cert.Certificate[] issuerChain = keystoreService.getCertificateChain(keystore.getId(), password.toCharArray(), issuerCertData.getAlias());
+
+        if (issuerChain == null || issuerChain.length == 0) {
+            throw new CertificateValidationException("Neuspešno učitavanje lanca izdavaoca.");
+        }
+
+        // KLJUČNA STVAR: Uzimamo X500Name direktno iz encoded forme roditelja da izbegnemo String mismatch
+        X509Certificate issuerCertX509 = (X509Certificate) issuerChain[0];
+        X500Name issuerName = X500Name.getInstance(issuerCertX509.getSubjectX500Principal().getEncoded());
+
+        // 3. Generisanje podataka za novi sertifikat
+        KeyPair subjectKeyPair = cryptoService.generateRSAKeyPair();
+        X500Name subjectName = buildX500NameFromDto(dto);
+        BigInteger serialNumber = new BigInteger(128, new SecureRandom());
+
+        int keyUsage;
+        CertificateType type;
+        if(dto.isCA()){
+            type = CertificateType.INTERMEDIATE;
+            keyUsage = KeyUsage.keyCertSign | KeyUsage.cRLSign;
+        }
+        else{
+            type = CertificateType.END_ENTITY;
+            keyUsage = KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+        }
+
+        // 4. Kreiranje sertifikata
+        X509Certificate newCert = certificateFactory.createCertificate(
+            subjectName, issuerName,
+            subjectKeyPair.getPublic(), issuerPrivateKey,
+            dto.getValidFrom(), dto.getValidTo(),
+            serialNumber, dto.isCA(), keyUsage, issuerCertData.getSerialNumber()
+        );
+
+        // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
+        java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
+        newChain[0] = newCert; // Novi je na vrhu
+        System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
+
+        // 6. Snimanje u Keystore (p12 fajl)
+        String alias = serialNumber.toString();
+        var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
+
+        // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
+        ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
+        keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
+
+        if(subjectUser.getRole() == UserRole.ADMIN){
+            subjectUser = userRepository.findByEmail(issuerCertData.getEmail())
+                    .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + issuerCertData.getEmail()));
+        }
+
+        return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
     }
-    
-    // KLJUČNA STVAR: Uzimamo X500Name direktno iz encoded forme roditelja da izbegnemo String mismatch
-    X509Certificate issuerCertX509 = (X509Certificate) issuerChain[0];
-    X500Name issuerName = X500Name.getInstance(issuerCertX509.getSubjectX500Principal().getEncoded());
 
-    // 3. Generisanje podataka za novi sertifikat
-    KeyPair subjectKeyPair = cryptoService.generateRSAKeyPair();
-    X500Name subjectName = buildX500NameFromDto(dto);
-    BigInteger serialNumber = new BigInteger(128, new SecureRandom());
-    
-    boolean isCa = subjectUser.getRole() == UserRole.ADMIN || subjectUser.getRole() == UserRole.CA_USER;
-    int keyUsage = isCa ? KeyUsage.keyCertSign | KeyUsage.cRLSign : KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+    @Transactional
+    public Certificate issueE2ECertificate(Long csrId) throws Exception {
+        // 1. Dobavljanje CSR-a
+        Csr csr = csrRepository.findById(csrId)
+                .orElseThrow(() -> new ResourceNotFoundException("CSR zahtev nije pronađen."));
 
-    // 4. Kreiranje sertifikata
-    X509Certificate newCert = certificateFactory.createCertificate(
-        subjectName, issuerName,
-        subjectKeyPair.getPublic(), issuerPrivateKey,
-        dto.getValidFrom(), dto.getValidTo(),
-        serialNumber, isCa, keyUsage, issuerCertData.getSerialNumber()
-    );
+        if (csr.getStatus() != CsrStatus.PENDING) {
+            throw new IllegalArgumentException("CSR zahtev nije u statusu PENDING.");
+        }
 
-    // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
-    java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
-    newChain[0] = newCert; // Novi je na vrhu
-    System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
+        User subjectUser = csr.getUser();
 
-    // 6. Snimanje u Keystore (p12 fajl)
-    String alias = serialNumber.toString();
-    var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
-    
-    // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
-    ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
-    keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
+        // 3. Priprema Keystore-a za Subject User-a
+        // Ako korisnik nema keystore, kreiramo ga. Ako ima, koristimo postojeći.
+        Keystore subjectKeystore;
+        String subjectKeystorePass;
 
-    // 7. Snimanje u bazu
-    CertificateType type = isCa ? CertificateType.INTERMEDIATE : CertificateType.END_ENTITY;
-    return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
-}
+        Optional<Keystore> optionalKeystore = keystoreRepository.findByUser_Id(subjectUser.getId());
+        if (optionalKeystore.isPresent()) {
+            subjectKeystore = optionalKeystore.get();
+            subjectKeystorePass = cryptoService.decryptAES(subjectKeystore.getEncryptedPassword());
+        } else {
+            // Kreiranje novog keystore-a
+            subjectKeystorePass = cryptoService.generateRandomPassword();
+            subjectKeystore = new Keystore();
+            subjectKeystore.setEncryptedPassword(cryptoService.encryptAES(subjectKeystorePass));
+            subjectKeystore.setUser(subjectUser);
+            keystoreRepository.save(subjectKeystore);
+        }
 
-    private Certificate validateIssuer(String issuerSerial) throws Exception {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String subjectEmail = email;
+
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User CAUser = userRepository.findByEmail(subjectEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + subjectEmail));
+
+        // 4. Dobavljanje Izdavaoca (CA) na osnovu podatka iz CSR-a
+        Certificate issuerCertEntity = validateIssuer(csr.getIssuerSerialNumber(), CAUser); // Tvoja postojeća validacija
+
+        // 5. Učitavanje Privatnog ključa IZDAVAOCA (CA)
+        Keystore issuerKeystore = issuerCertEntity.getKeystore();
+        String issuerPass = cryptoService.decryptAES(issuerKeystore.getEncryptedPassword());
+
+        PrivateKey issuerPrivateKey = keystoreService.getPrivateKey(
+                issuerKeystore.getId(),
+                issuerPass.toCharArray(),
+                issuerCertEntity.getAlias()
+        );
+
+        // Ime izdavaoca za sertifikat
+        java.security.cert.Certificate[] issuerChain = keystoreService.getCertificateChain(
+                issuerKeystore.getId(), issuerPass.toCharArray(), issuerCertEntity.getAlias());
+        X509Certificate issuerX509 = (X509Certificate) issuerChain[0];
+        X500Name issuerName = X500Name.getInstance(issuerX509.getSubjectX500Principal().getEncoded());
+
+        // 6. Priprema podataka za NOVI sertifikat iz CSR-a
+
+        // a) Konverzija String Public Key -> PublicKey objekat
+        PublicKey subjectPublicKey = convertStringToPublicKey(csr.getPublicKey());
+
+        // b) Kreiranje X500Name (Subject) iz podataka u CSR-u
+        X500Name subjectName = buildX500NameFromCsr(csr);
+
+        // c) Generisanje serijskog broja
+        BigInteger serialNumber = new BigInteger(128, new SecureRandom());
+
+        // d) Postavljanje datuma (Od sada do onoga što je traženo u CSR-u)
+        // Napomena: ZonedDateTime konverzija zavisi od tvoje implementacije CertificateFactory
+        ZonedDateTime validFrom = ZonedDateTime.now();
+        ZonedDateTime validTo = csr.getExpiresAt().atZone(ZoneId.systemDefault());
+
+        // 7. Kreiranje Sertifikata (Factory poziv)
+        X509Certificate newCert = certificateFactory.createCertificate(
+                subjectName,
+                issuerName,
+                subjectPublicKey,       // Ključ iz CSR-a
+                issuerPrivateKey,       // Potpis CA
+                validFrom,
+                validTo,
+                serialNumber,
+                false,                  // isCa = false (End Entity)
+                KeyUsage.digitalSignature | KeyUsage.keyEncipherment,
+                issuerCertEntity.getSerialNumber()
+        );
+
+        // 8. Čuvanje u Keystore KORISNIKA (Subject)
+        // Čuvamo kao TrustedCertificateEntry jer nemamo privatni ključ (on je kod korisnika)
+        String alias = serialNumber.toString();
+        var ks = keystoreService.loadKeyStore(subjectKeystore.getId(), subjectKeystorePass.toCharArray());
+
+        ks.setCertificateEntry(alias, newCert);
+
+        keystoreService.saveKeyStore(ks, subjectKeystore.getId(), subjectKeystorePass.toCharArray());
+
+        // 9. Ažuriranje statusa CSR-a
+        csr.setStatus(CsrStatus.APPROVED);
+        csrRepository.save(csr);
+
+        return saveCertificateEntity(newCert, subjectUser, subjectKeystore, CertificateType.END_ENTITY, issuerCertEntity.getSerialNumber());
+    }
+
+    // Pomoćna metoda za konverziju (ako je već nemaš)
+    private PublicKey convertStringToPublicKey(String publicKeyStr) throws Exception {
+        byte[] keyBytes = Base64.getDecoder().decode(publicKeyStr);
+        X509EncodedKeySpec spec = new X509EncodedKeySpec(keyBytes);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        return keyFactory.generatePublic(spec);
+    }
+
+    public Certificate createCACertKeystore(CertificateIssueDTO dto, User owner) throws Exception{
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String subjectEmail = email;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User adminUser = userRepository.findByEmail(subjectEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + subjectEmail));
+
+        String password = cryptoService.generateRandomPassword();
+        Keystore keystore = new Keystore();
+        keystore.setEncryptedPassword(cryptoService.encryptAES(password));
+        keystore.setUser(owner);
+        keystoreRepository.save(keystore);
+
+        // 1. Validacija izdavaoca
+        Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber(), adminUser);
+
+        // 2. Učitavanje ključa i lanca roditelja
+        Keystore issuerKeystore = issuerCertData.getKeystore();
+        String issuerPassword = cryptoService.decryptAES(issuerKeystore.getEncryptedPassword());
+
+        PrivateKey issuerPrivateKey = keystoreService.getPrivateKey(issuerKeystore.getId(), issuerPassword.toCharArray(), issuerCertData.getAlias());
+        java.security.cert.Certificate[] issuerChain = keystoreService.getCertificateChain(issuerKeystore.getId(), issuerPassword.toCharArray(), issuerCertData.getAlias());
+
+        if (issuerChain == null || issuerChain.length == 0) {
+            throw new CertificateValidationException("Neuspešno učitavanje lanca izdavaoca.");
+        }
+
+        // KLJUČNA STVAR: Uzimamo X500Name direktno iz encoded forme roditelja da izbegnemo String mismatch
+        X509Certificate issuerCertX509 = (X509Certificate) issuerChain[0];
+        X500Name issuerName = X500Name.getInstance(issuerCertX509.getSubjectX500Principal().getEncoded());
+
+        // 3. Generisanje podataka za novi sertifikat
+        KeyPair subjectKeyPair = cryptoService.generateRSAKeyPair();
+        X500Name subjectName = buildX500NameFromDto(dto);
+        BigInteger serialNumber = new BigInteger(128, new SecureRandom());
+
+        int keyUsage = KeyUsage.keyCertSign | KeyUsage.cRLSign;
+
+        // 4. Kreiranje sertifikata
+        X509Certificate newCert = certificateFactory.createCertificate(
+                subjectName, issuerName,
+                subjectKeyPair.getPublic(), issuerPrivateKey,
+                dto.getValidFrom(), dto.getValidTo(),
+                serialNumber, true, keyUsage, issuerCertData.getSerialNumber()
+        );
+
+        // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
+        java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
+        newChain[0] = newCert; // Novi je na vrhu
+        System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
+
+        // 6. Snimanje u Keystore (p12 fajl)
+        String alias = serialNumber.toString();
+        var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
+
+        // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
+        ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
+        keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
+
+        return saveCertificateEntity(newCert, owner, keystore, CertificateType.INTERMEDIATE, issuerCertData.getSerialNumber());
+    }
+
+    private Certificate validateIssuer(String issuerSerial, User owner) throws Exception {
         Certificate issuer = certificateRepository.findBySerialNumber(issuerSerial)
                 .orElseThrow(() -> new ResourceNotFoundException("Issuer certificate not found."));
 
+        if(!issuer.getOwner().equals(owner) && owner.getRole() != UserRole.ADMIN) {
+            throw new CertificateValidationException("You are not the owner of issuer certificate");
+        }
         if (issuer.isRevoked()) {
             throw new CertificateValidationException("Issuer certificate is revoked.");
         }
@@ -259,6 +518,16 @@ public class CertificateService {
         return builder.build();
     }
 
+    private X500Name buildX500NameFromCsr(Csr csr) {
+        X500NameBuilder nameBuilder = new X500NameBuilder(BCStyle.INSTANCE);
+        nameBuilder.addRDN(BCStyle.CN, csr.getCommonName());
+        if (csr.getOrganization() != null) nameBuilder.addRDN(BCStyle.O, csr.getOrganization());
+        if (csr.getOrganizationalUnit() != null) nameBuilder.addRDN(BCStyle.OU, csr.getOrganizationalUnit());
+        if (csr.getCountry() != null) nameBuilder.addRDN(BCStyle.C, csr.getCountry());
+        if (csr.getEmail() != null) nameBuilder.addRDN(BCStyle.EmailAddress, csr.getEmail());
+        return nameBuilder.build();
+    }
+
     public boolean isCertificateValid(String serialNumber) {
     Certificate cert = certificateRepository.findBySerialNumber(serialNumber)
             .orElseThrow(() -> new ResourceNotFoundException("Certificate not found"));
@@ -282,22 +551,34 @@ public class CertificateService {
                 .orElseThrow(() -> new ResourceNotFoundException("Certificate not found"));
     }
 
+    // U CertificateService.java
+
     public byte[] downloadCertificateAsDER(String serialNumber) throws Exception {
         Certificate certEntity = getCertificateBySerialNumber(serialNumber);
         Keystore keystore = certEntity.getKeystore();
         String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
-        
-        java.security.cert.Certificate[] certChain = keystoreService.getCertificateChain(
-                keystore.getId(), 
-                password.toCharArray(), 
-                certEntity.getAlias()
-        );
-        
-        if (certChain == null || certChain.length == 0) {
+
+        // Učitavamo keystore
+        java.security.KeyStore ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
+
+        java.security.cert.Certificate cert = null;
+
+        if (certEntity.getType() == CertificateType.END_ENTITY) {
+            // Za EE sertifikate koristimo getCertificate (jer je Trusted Entry)
+            cert = ks.getCertificate(certEntity.getAlias());
+        } else {
+            // Za CA/Root sertifikate koristimo lanac (jer je PrivateKey Entry)
+            java.security.cert.Certificate[] chain = ks.getCertificateChain(certEntity.getAlias());
+            if (chain != null && chain.length > 0) {
+                cert = chain[0];
+            }
+        }
+
+        if (cert == null) {
             throw new ResourceNotFoundException("Certificate not found in keystore");
         }
-        
-        return certChain[0].getEncoded();
+
+        return cert.getEncoded();
     }
     
     public byte[] handleOcspRequest(byte[] requestBytes) throws Exception {
@@ -377,7 +658,7 @@ public class CertificateService {
         Certificate ca = certificateRepository.findBySerialNumber(csrDTO.getIssuerSerialNumber())
                 .orElseThrow(() -> new IllegalArgumentException("Intermediate CA not found"));
         
-        validateIssuer(ca.getSerialNumber());
+        validateIssuer(ca.getSerialNumber(), ca.getOwner());
 
         if (csrDTO.expiresAt.isAfter(ca.getValidTo()))
             throw new IllegalArgumentException("Requested expiration outside CA validity");

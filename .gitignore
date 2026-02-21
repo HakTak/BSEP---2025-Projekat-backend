@@ -47,5 +47,3 @@ build/
 # Blokiramo logove
 *.log
 
-#properties
-*.propertiessrc/main/java/com/bezbednost/sertifikat/config/KeycloakConfig.java
