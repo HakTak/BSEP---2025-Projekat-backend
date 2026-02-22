@@ -100,7 +100,7 @@ public class UserService {
         
         // Slanje aktivacionog emaila
         try {
-            //emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
+            emailService.sendActivationEmail(user.getEmail(), user.getFirstName(), activationTokenStr);
         } catch (Exception e) {
             userRepository.delete(user);
             throw new RuntimeException("Greška pri slanju aktivacionog emaila. Pokušajte ponovo.");
