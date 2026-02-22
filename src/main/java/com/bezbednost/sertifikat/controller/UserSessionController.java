@@ -4,6 +4,7 @@ import com.bezbednost.sertifikat.dto.UserSessionDTO;
 import com.bezbednost.sertifikat.service.UserSessionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +22,7 @@ public class UserSessionController {
     }
 
     @GetMapping("/sessions")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<UserSessionDTO>> getActiveSessions(@AuthenticationPrincipal Jwt jwt, HttpServletRequest request) {
         // Izvlačimo podatke iz JWT tokena
         String email = jwt.getClaimAsString("email"); // ili "preferred_username" zavisno od Keycloaka
@@ -36,8 +38,16 @@ public class UserSessionController {
     }
 
     @PostMapping("/sessions/revoke/{sessionId}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<String> revokeSession(@PathVariable String sessionId) {
         userSessionService.revokeSession(sessionId);
+        return ResponseEntity.ok("Sesija uspešno opozvana i zabeležena u bazi.");
+    }
+
+    @PutMapping("/logout")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<String> logout() {
+        userSessionService.revokeActiveSession();
         return ResponseEntity.ok("Sesija uspešno opozvana i zabeležena u bazi.");
     }
 }
