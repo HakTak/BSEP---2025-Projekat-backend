@@ -15,10 +15,10 @@ public class KeycloakConfig {
         System.out.println("Initializing Keycloak Admin Client...");
 
         return KeycloakBuilder.builder()
-                .serverUrl("http://localhost:8180")
+                .serverUrl("http://localhost:8080")
                 .realm("sertifikat")
                 .clientId("my-backend") // The ID from Step 1
-                .clientSecret("x1xITSLeH8YZMLGWxODlosb16GszmkDo") // The Secret from Step 3
+                .clientSecret("3PfADgyR1InW2pJr7HeOA5c0uAnbNkcd") // The Secret from Step 3
                 .grantType("client_credentials") // This is the "Service Account" flow
                 .build();
     }
