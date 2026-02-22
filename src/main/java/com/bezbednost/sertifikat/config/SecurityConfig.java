@@ -55,6 +55,7 @@ public class SecurityConfig {
                                 "/api/auth/forgot-password",
                                 "/api/auth/reset-password",
                                 "/swagger-ui.html",
+                                "/api/certificates/check",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",
                                 "/api/certificates/download"
