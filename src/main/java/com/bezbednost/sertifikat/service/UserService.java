@@ -241,6 +241,7 @@ public class UserService {
 
         // 7. SET mustChangePassword = false u Keycloak-u
         keycloakService.updateUserAttribute(email, "mustChangePassword", "false");
+        
     }
 
     
@@ -301,11 +302,14 @@ public class UserService {
             throw new IllegalArgumentException("Reset token je istekao");
         }
         
-        // Resetovanje lozinke
+        // Resetovanje lozinke u postgreu
         User user = resetToken.getUser();
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
-        
+
+        // 2. Promeni lozinku u keyclock
+        keycloakService.updatePassword(user.getEmail(), request.getNewPassword());
+
         // Označavanje tokena kao korišten
         resetToken.setUsed(true);
         resetToken.setUsedAt(LocalDateTime.now());
