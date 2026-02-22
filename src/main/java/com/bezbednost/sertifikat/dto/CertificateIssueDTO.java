@@ -7,6 +7,9 @@ import java.util.List;
 
 @Data
 public class CertificateIssueDTO {
+    //Podaci o sablonu
+    private Long templateId;
+
     // Podaci o subjektu
     private String commonName;
     private String organization;

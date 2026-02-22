@@ -20,31 +20,31 @@ public class UserController {
         this.userService = userService;
     }
 
-    @GetMapping("/my-profile")
-    @PreAuthorize("isAuthenticated()")
-    public Map<String, Object> getMyProfile(Authentication authentication) {
-        // Objekat 'authentication' sadrži informacije o ulogovanom korisniku
-        // Spring Security automatski popunjava ovaj objekat na osnovu JWT-a
-
-        userService.getUserById()
-
-        if (authentication != null && authentication.getPrincipal() instanceof Jwt) {
-            Jwt jwt = (Jwt) authentication.getPrincipal();
-            Map<String, Object> claims = jwt.getClaims();
-
-            // Svi claims iz JWT-a su sada dostupni u mapi
-            // Možeš im pristupiti direktno
-            // String userId = jwt.getSubject(); // Standardni ID korisnika
-            // String username = jwt.getClaimAsString("preferred_username");
-            // String email = jwt.getClaimAsString("email");
-            // String sessionId = jwt.getClaimAsString("sid"); // Keycloak-ov Session ID
-            // String customSessionId = jwt.getClaimAsString("userSessionID"); // Ako si ga tako mapirao
-
-            // Vratićemo sve claims za demonstraciju
-            return claims;
-        }
-        return Map.of("message", "Korisnik nije autentifikovan ili je token neispravan.");
-    }
+//    @GetMapping("/my-profile")
+//    @PreAuthorize("isAuthenticated()")
+//    public Map<String, Object> getMyProfile(Authentication authentication) {
+//        // Objekat 'authentication' sadrži informacije o ulogovanom korisniku
+//        // Spring Security automatski popunjava ovaj objekat na osnovu JWT-a
+//
+//        userService.getUserById();
+//
+//        if (authentication != null && authentication.getPrincipal() instanceof Jwt) {
+//            Jwt jwt = (Jwt) authentication.getPrincipal();
+//            Map<String, Object> claims = jwt.getClaims();
+//
+//            // Svi claims iz JWT-a su sada dostupni u mapi
+//            // Možeš im pristupiti direktno
+//            // String userId = jwt.getSubject(); // Standardni ID korisnika
+//            // String username = jwt.getClaimAsString("preferred_username");
+//            // String email = jwt.getClaimAsString("email");
+//            // String sessionId = jwt.getClaimAsString("sid"); // Keycloak-ov Session ID
+//            // String customSessionId = jwt.getClaimAsString("userSessionID"); // Ako si ga tako mapirao
+//
+//            // Vratićemo sve claims za demonstraciju
+//            return claims;
+//        }
+//        return Map.of("message", "Korisnik nije autentifikovan ili je token neispravan.");
+//    }
 
 //    @GetMapping("/active-sessions")
 //    @PreAuthorize("isAuthenticated()")
