@@ -66,10 +66,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.Base64;
-import java.util.Date;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -139,7 +136,7 @@ public class CertificateService {
     }
 
     @Transactional
-    public Certificate issueIntermediateCertificate(CertificateIssueDTO dto) throws Exception {
+    public Certificate issueCertificate(CertificateIssueDTO dto) throws Exception {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         Jwt jwt = (Jwt) authentication.getPrincipal();
 
@@ -185,7 +182,7 @@ public class CertificateService {
 
         int keyUsage;
         CertificateType type;
-        if(dto.isCA()){
+        if(dto.isCa()){
             type = CertificateType.INTERMEDIATE;
             keyUsage = KeyUsage.keyCertSign | KeyUsage.cRLSign;
         }
@@ -199,27 +196,37 @@ public class CertificateService {
             subjectName, issuerName,
             subjectKeyPair.getPublic(), issuerPrivateKey,
             dto.getValidFrom(), dto.getValidTo(),
-            serialNumber, dto.isCA(), keyUsage, issuerCertData.getSerialNumber()
+            serialNumber, dto.isCa(), keyUsage, issuerCertData.getSerialNumber()
         );
 
-        // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
-        java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
-        newChain[0] = newCert; // Novi je na vrhu
-        System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
+        if(dto.isCa()){
+            // 5. Formiranje lanca: [Novi, Roditelj, Deda...]
+            java.security.cert.Certificate[] newChain = new java.security.cert.Certificate[issuerChain.length + 1];
+            newChain[0] = newCert; // Novi je na vrhu
+            System.arraycopy(issuerChain, 0, newChain, 1, issuerChain.length); // Kopiramo ostatak
 
-        // 6. Snimanje u Keystore (p12 fajl)
-        String alias = serialNumber.toString();
-        var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
+            // 6. Snimanje u Keystore (p12 fajl)
+            String alias = serialNumber.toString();
+            var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
 
-        // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
-        ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
-        keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
+            // setKeyEntry zahteva privatni ključ novog sertifikata i kompletan lanac
+            ks.setKeyEntry(alias, subjectKeyPair.getPrivate(), password.toCharArray(), newChain);
+            keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
 
-        if(subjectUser.getRole() == UserRole.ADMIN){
-            subjectUser = userRepository.findByEmail(issuerCertData.getEmail())
-                    .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + issuerCertData.getEmail()));
+            if(subjectUser.getRole() == UserRole.ADMIN){
+                subjectUser = userRepository.findByEmail(issuerCertData.getEmail())
+                        .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + issuerCertData.getEmail()));
+            }
         }
+        else{
+            String alias = serialNumber.toString();
+            var ks = keystoreService.loadKeyStore(keystore.getId(), password.toCharArray());
 
+            ks.setCertificateEntry(alias, newCert);
+
+            keystoreService.saveKeyStore(ks, keystore.getId(), password.toCharArray());
+
+        }
         return saveCertificateEntity(newCert, subjectUser, keystore, type, issuerCertData.getSerialNumber());
     }
 
@@ -235,23 +242,6 @@ public class CertificateService {
 
         User subjectUser = csr.getUser();
 
-        // 3. Priprema Keystore-a za Subject User-a
-        // Ako korisnik nema keystore, kreiramo ga. Ako ima, koristimo postojeći.
-        Keystore subjectKeystore;
-        String subjectKeystorePass;
-
-        Optional<Keystore> optionalKeystore = keystoreRepository.findByUser_Id(subjectUser.getId());
-        if (optionalKeystore.isPresent()) {
-            subjectKeystore = optionalKeystore.get();
-            subjectKeystorePass = cryptoService.decryptAES(subjectKeystore.getEncryptedPassword());
-        } else {
-            // Kreiranje novog keystore-a
-            subjectKeystorePass = cryptoService.generateRandomPassword();
-            subjectKeystore = new Keystore();
-            subjectKeystore.setEncryptedPassword(cryptoService.encryptAES(subjectKeystorePass));
-            subjectKeystore.setUser(subjectUser);
-            keystoreRepository.save(subjectKeystore);
-        }
 
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         Jwt jwt = (Jwt) authentication.getPrincipal();
@@ -276,6 +266,24 @@ public class CertificateService {
 
         // 4. Dobavljanje Izdavaoca (CA) na osnovu podatka iz CSR-a
         Certificate issuerCertEntity = validateIssuer(csr.getIssuerSerialNumber(), CAUser); // Tvoja postojeća validacija
+
+        // 3. Priprema Keystore-a za Subject User-a
+        // Ako korisnik nema keystore, kreiramo ga. Ako ima, koristimo postojeći.
+        Keystore subjectKeystore;
+        String subjectKeystorePass;
+
+        Optional<Keystore> optionalKeystore = keystoreRepository.findByUser_Id(subjectUser.getId());
+        if (optionalKeystore.isPresent()) {
+            subjectKeystore = optionalKeystore.get();
+            subjectKeystorePass = cryptoService.decryptAES(subjectKeystore.getEncryptedPassword());
+        } else {
+            // Kreiranje novog keystore-a
+            subjectKeystorePass = cryptoService.generateRandomPassword();
+            subjectKeystore = new Keystore();
+            subjectKeystore.setEncryptedPassword(cryptoService.encryptAES(subjectKeystorePass));
+            subjectKeystore.setUser(subjectUser);
+            keystoreRepository.save(subjectKeystore);
+        }
 
         // 5. Učitavanje Privatnog ključa IZDAVAOCA (CA)
         Keystore issuerKeystore = issuerCertEntity.getKeystore();
@@ -554,8 +562,31 @@ public class CertificateService {
     // U CertificateService.java
 
     public byte[] downloadCertificateAsDER(String serialNumber) throws Exception {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String subjectEmail = email;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User user = userRepository.findByEmail(subjectEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + subjectEmail));
+
         Certificate certEntity = getCertificateBySerialNumber(serialNumber);
         Keystore keystore = certEntity.getKeystore();
+        if(!keystore.getUser().equals(user) && user.getRole() != UserRole.ADMIN){
+            throw new ResourceNotFoundException("Sertifikat nije korisnikov");
+        }
         String password = cryptoService.decryptAES(keystore.getEncryptedPassword());
 
         // Učitavamo keystore
@@ -654,6 +685,25 @@ public class CertificateService {
     }
     
     public Csr submitCsr(CsrDTO csrDTO) throws Exception {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        // 3. Ovo je ključno: Pravimo FINALNU varijablu za korišćenje u lambdi
+        final String subjectEmail = email;
+
+        // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
+        User user = userRepository.findByEmail(subjectEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + subjectEmail));
 
         Certificate ca = certificateRepository.findBySerialNumber(csrDTO.getIssuerSerialNumber())
                 .orElseThrow(() -> new IllegalArgumentException("Intermediate CA not found"));
@@ -685,6 +735,7 @@ public class CertificateService {
                 .issuerSerialNumber(csrDTO.getIssuerSerialNumber())
                 .issuedAt(LocalDateTime.now())
                 .status(CsrStatus.PENDING)
+                .user(user)
                 .build();
 
         return csrRepository.save(entity);
@@ -697,15 +748,27 @@ public class CertificateService {
         }
         return null;
     }
-	
-	private PKCS10CertificationRequest parse(String pem) {
-        try (PemReader reader = new PemReader(new StringReader(pem.trim()))) {
-            PemObject obj = reader.readPemObject();
-            if (obj == null || (!obj.getType().equals("CERTIFICATE REQUEST")
-                    && !obj.getType().equals("NEW CERTIFICATE REQUEST"))) {
-                throw new IllegalArgumentException("Invalid CSR PEM");
+
+    private PKCS10CertificationRequest parse(String pem) {
+        try {
+            // Normalizuj sve vrste line endinga
+            String normalized = pem.replace("\r\n", "\n")
+                    .replace("\r", "\n")
+                    .trim();
+
+            // Izvuci samo base64 sadrzaj izmedju markera
+            String base64 = normalized
+                    .replaceAll("-----BEGIN[^-]+-----", "")
+                    .replaceAll("-----END[^-]+-----", "")
+                    .replaceAll("\\s+", ""); // ukloni sve whitespace ukljucujuci \n
+
+            if (base64.isEmpty()) {
+                throw new IllegalArgumentException("Invalid CSR PEM - no content found");
             }
-            return new PKCS10CertificationRequest(obj.getContent());
+
+            byte[] decoded = Base64.getDecoder().decode(base64);
+            return new PKCS10CertificationRequest(decoded);
+
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to parse CSR", e);
         }
@@ -744,6 +807,6 @@ public class CertificateService {
 	}
 	
 	public List<Csr> getAllCACsr(Long userId){
-		return certificateRepository.findCsrsBySigningCaOwner(userId);
+		return csrRepository.findCsrsBySigningCaOwner(userId);
 	}
 }

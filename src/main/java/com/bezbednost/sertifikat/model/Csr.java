@@ -29,9 +29,8 @@ public class Csr {
 	    private String country;              // C
 	    private String email;             // L
 
-	    @Lob
-	    @Column(nullable = false)
-	    private String publicKey;         // public key as string
+		@Column(columnDefinition = "TEXT", nullable = false)
+		private String publicKey;         // public key as string
 
 	    @Column(nullable = false)
 	    private LocalDateTime expiresAt;           // requested certificate expiration

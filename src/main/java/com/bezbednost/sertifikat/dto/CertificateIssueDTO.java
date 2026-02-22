@@ -21,6 +21,6 @@ public class CertificateIssueDTO {
     // Za non-root sertifikate
     private String issuerSerialNumber;
 
-    private boolean isCA;
+    private boolean ca;
     private List<Integer> keyUsage;
 }
