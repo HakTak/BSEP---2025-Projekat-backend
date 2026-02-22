@@ -5,15 +5,9 @@ import com.bezbednost.sertifikat.dto.CsrDTO;
 import com.bezbednost.sertifikat.entity.*;
 import com.bezbednost.sertifikat.exception.CertificateValidationException;
 import com.bezbednost.sertifikat.exception.ResourceNotFoundException;
+import com.bezbednost.sertifikat.model.*;
 import com.bezbednost.sertifikat.model.Certificate;
-import com.bezbednost.sertifikat.model.CertificateType;
-import com.bezbednost.sertifikat.model.Csr;
-import com.bezbednost.sertifikat.model.CsrStatus;
-import com.bezbednost.sertifikat.model.Keystore;
-import com.bezbednost.sertifikat.repository.CertificateRepository;
-import com.bezbednost.sertifikat.repository.CsrRepository;
-import com.bezbednost.sertifikat.repository.UserRepository;
-import com.bezbednost.sertifikat.repository.KeyStoreRepository;
+import com.bezbednost.sertifikat.repository.*;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 
@@ -66,6 +60,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 @Service
@@ -79,6 +74,7 @@ public class CertificateService {
     private final KeystoreService keystoreService;
     private final CertificateFactory certificateFactory;
     private final CsrRepository csrRepository;
+    private final TemplateRepository templateRepository;
     
     @Transactional
     public Certificate issueRootCertificate(CertificateIssueDTO dto) throws Exception {
@@ -157,6 +153,34 @@ public class CertificateService {
         User subjectUser = userRepository.findByEmail(subjectEmail)
                 .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + subjectEmail));
 
+        // PRoveravamo da li korisnik ima sablon, ako ima validiramo ga
+
+        // Primena šablona (opciono)
+        if (dto.getTemplateId() != null) {
+            CertificateTemplate template = templateRepository.findById(dto.getTemplateId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Šablon nije pronađen"));
+
+            // Validacija CN-a prema regex-u iz šablona
+            if (template.getCnRegex() != null && !dto.getCommonName().matches(template.getCnRegex())) {
+                throw new IllegalArgumentException(
+                        "Common Name '" + dto.getCommonName() + "' ne odgovara šablonu (regex: " + template.getCnRegex() + ")"
+                );
+            }
+
+            // Validacija TTL-a
+            long requestedDays = ChronoUnit.DAYS.between(dto.getValidFrom(), dto.getValidTo());
+            if (requestedDays > template.getTtlDays()) {
+                throw new IllegalArgumentException(
+                        "Trajanje sertifikata (" + requestedDays + " dana) premašuje maksimum šablona (" + template.getTtlDays() + " dana)"
+                );
+            }
+
+            // Primeni keyUsage iz šablona samo ako korisnik nije eksplicitno uneo vrednost
+            if (dto.getKeyUsage() == null || dto.getKeyUsage().isEmpty()) {
+                dto.setKeyUsage(List.of(template.getKeyUsage()));
+            }
+        }
+
         // 1. Validacija izdavaoca
         Certificate issuerCertData = validateIssuer(dto.getIssuerSerialNumber(), subjectUser);
 
@@ -184,11 +208,19 @@ public class CertificateService {
         CertificateType type;
         if(dto.isCa()){
             type = CertificateType.INTERMEDIATE;
-            keyUsage = KeyUsage.keyCertSign | KeyUsage.cRLSign;
+            keyUsage = KeyUsage.keyCertSign | KeyUsage.cRLSign; // Uvek finsko, valjda ? mozda moze dodati jos nesto proveriti!
         }
         else{
             type = CertificateType.END_ENTITY;
-            keyUsage = KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+
+            // Ako korisnik nije odabrao ništa, koristi default
+            if (dto.getKeyUsage() == null || dto.getKeyUsage().isEmpty()) {
+                keyUsage = KeyUsage.digitalSignature | KeyUsage.keyEncipherment;
+            } else {
+                // OR-uj sve vrednosti koje je korisnik stiklirao
+                keyUsage = dto.getKeyUsage().stream()
+                        .reduce(0, (a, b) -> a | b);
+            }
         }
 
         // 4. Kreiranje sertifikata
