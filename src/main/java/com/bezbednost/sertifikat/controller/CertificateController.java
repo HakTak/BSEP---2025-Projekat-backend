@@ -113,7 +113,7 @@ public class CertificateController {
     }
 
     @GetMapping("/download/{serialNumber}")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAnonymous()")
     public ResponseEntity<?> downloadCertificate(@PathVariable String serialNumber) {
         try {
             byte[] certificateData = certificateService.downloadCertificateAsDER(serialNumber);
@@ -132,7 +132,6 @@ public class CertificateController {
     	    consumes = "application/ocsp-request",
     	    produces = "application/ocsp-response"
     	)
-    @PreAuthorize("isAuthenticated()")
     	public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
     	    try {
     	        byte[] response = certificateService.handleOcspRequest(requestBytes);
@@ -170,6 +169,18 @@ public class CertificateController {
      public ResponseEntity<?> getAllCA(){
     	 List<CertificateDetailsDTO> dtos =
     			 certificateService.getAllCA()
+    			 .stream()
+    			 .map(cert -> new CertificateDetailsDTO(cert
+    					 ))
+    			 .toList();
+    	 return new ResponseEntity<>(dtos, HttpStatus.OK);
+     }
+     
+     @GetMapping("/getAllEE")
+     @PreAuthorize("hasRole('USER')")
+     public ResponseEntity<?> getAllEE(){
+    	 List<CertificateDetailsDTO> dtos =
+    			 certificateService.getAllEE()
     			 .stream()
     			 .map(cert -> new CertificateDetailsDTO(cert
     					 ))

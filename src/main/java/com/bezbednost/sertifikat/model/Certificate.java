@@ -54,6 +54,9 @@ public class Certificate {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "keystore_id")
     private Keystore keystore;
+    
+    @Column(columnDefinition = "TEXT", nullable = false)
+    private String publicKey;
 
     private boolean revoked = false;
     private LocalDateTime revocationDate;

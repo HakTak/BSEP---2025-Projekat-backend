@@ -17,6 +17,7 @@ public class CertificateDetailsDTO {
     private String issuerSerialNumber;
     private LocalDateTime validFrom;
     private LocalDateTime validTo;
+    private String publicKey;
     private String type;
     private boolean isRevoked;
     private int revocationCode;
@@ -35,5 +36,6 @@ public class CertificateDetailsDTO {
         this.type = cert.getType().name();
         this.isRevoked = cert.isRevoked();
         this.revocationCode = cert.getRevocationCode();
+        this.publicKey = cert.getPublicKey();
     }
 }
