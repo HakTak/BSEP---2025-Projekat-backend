@@ -46,9 +46,9 @@ public class CertificateController {
 
     @PostMapping("/issue-intermediate")
     @PreAuthorize("hasRole('CA_USER') || hasRole('ADMIN')")
-    public ResponseEntity<?> issueIntermediateCertificate(@RequestBody CertificateIssueDTO dto) {
+    public ResponseEntity<?> issueCertificate(@RequestBody CertificateIssueDTO dto) {
         try {
-            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueIntermediateCertificate(dto);
+            com.bezbednost.sertifikat.model.Certificate cert = certificateService.issueCertificate(dto);
             return new ResponseEntity<>(new CertificateDetailsDTO(cert), HttpStatus.CREATED);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
@@ -88,12 +88,12 @@ public class CertificateController {
         // 4. Sada koristimo 'email' (koji je final) u DB pretrazi
         User user = userService.getUserByEmail(subjectEmail);
         try {
-        	List<CertificateDetailsDTO> dtos =
-        	        certificateService.getAll(user)
-        	                .stream()
-        	                .map(cert -> new CertificateDetailsDTO(cert
-        	                ))
-        	                .toList();
+            List<CertificateDetailsDTO> dtos =
+                    certificateService.getAll(user)
+                            .stream()
+                            .map(cert -> new CertificateDetailsDTO(cert
+                            ))
+                            .toList();
             return new ResponseEntity<>(dtos, HttpStatus.OK);
         } catch (Exception e) {
             return new ResponseEntity<>(e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
@@ -102,6 +102,7 @@ public class CertificateController {
     
 
     @GetMapping("/validate/{serialNumber}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> validate(@PathVariable String serialNumber) {
         try {
             boolean isValid = certificateService.isCertificateValid(serialNumber);
@@ -112,6 +113,7 @@ public class CertificateController {
     }
 
     @GetMapping("/download/{serialNumber}")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> downloadCertificate(@PathVariable String serialNumber) {
         try {
             byte[] certificateData = certificateService.downloadCertificateAsDER(serialNumber);
@@ -130,6 +132,7 @@ public class CertificateController {
     	    consumes = "application/ocsp-request",
     	    produces = "application/ocsp-response"
     	)
+    @PreAuthorize("isAuthenticated()")
     	public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
     	    try {
     	        byte[] response = certificateService.handleOcspRequest(requestBytes);
@@ -148,11 +151,13 @@ public class CertificateController {
     	}
         
      @PutMapping("/revoke")
+     @PreAuthorize("isAuthenticated()")
      public ResponseEntity<?> revoke(@RequestBody RevocationRequest revocationRequest){
     	 return ResponseEntity.ok().body(certificateService.revoke(revocationRequest.getSerialNumber(), revocationRequest.getRevocationCode()));
      }
-     
+
      @PostMapping("/submitCsr")
+     @PreAuthorize("hasRole('USER')")
      public ResponseEntity<?> submitCsr(@RequestBody CsrDTO csrDTO){
     	 try {
 			return ResponseEntity.ok().body(certificateService.submitCsr(csrDTO));
@@ -161,6 +166,7 @@ public class CertificateController {
 		}
      }
      @GetMapping("/getAllCA")
+     @PreAuthorize("hasRole('USER')")
      public ResponseEntity<?> getAllCA(){
     	 List<CertificateDetailsDTO> dtos =
     			 certificateService.getAllCA()
@@ -170,11 +176,43 @@ public class CertificateController {
     			 .toList();
     	 return new ResponseEntity<>(dtos, HttpStatus.OK);
      }
-     
-     @GetMapping("/getAllCACsr")
-     public ResponseEntity<?> getAllCACsr(){
-    	 Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-     		com.bezbednost.sertifikat.entity.User user = (com.bezbednost.sertifikat.entity.User) authentication.getPrincipal();
-    	 return new ResponseEntity<>(certificateService.getAllCACsr(user.getId()), HttpStatus.OK);
-     }
+
+    @GetMapping("/getAllCACsr")
+    @PreAuthorize("hasRole('CA_USER') || hasRole('ADMIN')")
+    public ResponseEntity<?> getAllCACsr(){
+        try{
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            System.out.println("AUTH: " + authentication);
+            System.out.println("AUTH CLASS: " + authentication.getClass().getName());
+
+            org.springframework.security.oauth2.jwt.Jwt jwt = (Jwt) authentication.getPrincipal();
+            System.out.println("JWT OK");
+
+            String email = jwt.getClaimAsString("email");
+            System.out.println("EMAIL: " + email);
+
+            if (email == null) {
+                email = jwt.getClaimAsString("preferred_username");
+                System.out.println("PREFERRED_USERNAME: " + email);
+            }
+
+            if (email == null) {
+                throw new IllegalStateException("Email nije pronađen u tokenu!");
+            }
+
+            final String subjectEmail = email;
+            User user = userService.getUserByEmail(subjectEmail);
+            System.out.println("USER: " + user);
+            System.out.println("USER ID: " + user.getId());
+
+            List<?> result = certificateService.getAllCACsr(user.getId());
+            System.out.println("RESULT SIZE: " + result.size());
+
+            return new ResponseEntity<>(result, HttpStatus.OK);
+        } catch(Exception e){
+            System.out.println("EXCEPTION: " + e.getMessage());
+            e.printStackTrace();
+            return new ResponseEntity<>(Map.of("error", e.getMessage()), HttpStatus.BAD_REQUEST);
+        }
+    }
 }
