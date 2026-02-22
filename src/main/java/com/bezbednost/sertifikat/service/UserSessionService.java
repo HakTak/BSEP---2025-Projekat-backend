@@ -7,6 +7,8 @@ import com.bezbednost.sertifikat.model.UserSession;
 import com.bezbednost.sertifikat.repository.UserRepository;
 import com.bezbednost.sertifikat.repository.UserSessionRepository;
 import jakarta.transaction.Transactional;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
@@ -53,8 +55,58 @@ public class UserSessionService {
 
     @Transactional
     public void revokeSession(String sessionId) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        final String adminEmail = email;
+
+        User user = userRepository.findByEmail(adminEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + adminEmail));
+
         UserSession session = userSessionRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new RuntimeException("Sesija nije pronađena"));
+
+        if (!session.getUser().equals(user)) {
+            throw new IllegalStateException("Ovo nije vasa sesija!");
+        }
+
+        session.setIsRevoked(true);
+        userSessionRepository.save(session);
+    }
+
+    @Transactional
+    public void revokeActiveSession(){
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Jwt jwt = (Jwt) authentication.getPrincipal();
+
+        String email = jwt.getClaimAsString("email");
+
+        if (email == null) {
+            email = jwt.getClaimAsString("preferred_username");
+        }
+
+        if (email == null) {
+            throw new IllegalStateException("Email nije pronađen u tokenu!");
+        }
+
+        final String userEmail = email;
+
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new IllegalStateException("Korisnik ne postoji u bazi sa emailom: " + userEmail));
+
+        UserSession session = userSessionRepository.findBySessionId(jwt.getClaimAsString("sid"))
+                .orElseThrow(() -> new RuntimeException("Sesija nije pronađena"));
+
         session.setIsRevoked(true);
         userSessionRepository.save(session);
     }

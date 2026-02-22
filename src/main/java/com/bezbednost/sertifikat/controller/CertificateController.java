@@ -132,7 +132,6 @@ public class CertificateController {
     	    consumes = "application/ocsp-request",
     	    produces = "application/ocsp-response"
     	)
-    @PreAuthorize("isAuthenticated()")
     	public ResponseEntity<byte[]> checkRevokeStatus(@RequestBody byte[] requestBytes) {
     	    try {
     	        byte[] response = certificateService.handleOcspRequest(requestBytes);
