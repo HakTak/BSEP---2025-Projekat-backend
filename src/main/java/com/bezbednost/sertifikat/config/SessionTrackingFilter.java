@@ -1,5 +1,7 @@
 package com.bezbednost.sertifikat.config;
 
+import com.bezbednost.sertifikat.service.AuditEventType;
+import com.bezbednost.sertifikat.service.AuditLogger;
 import com.bezbednost.sertifikat.service.UserSessionService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -17,52 +19,67 @@ import java.io.IOException;
 public class SessionTrackingFilter extends OncePerRequestFilter {
 
     private final UserSessionService userSessionService;
+    private final AuditLogger auditLogger;
 
-    public SessionTrackingFilter(UserSessionService userSessionService) {
+    public SessionTrackingFilter(UserSessionService userSessionService, AuditLogger auditLogger) {
         this.userSessionService = userSessionService;
+        this.auditLogger = auditLogger;
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
 
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-        if (authentication != null && authentication.getPrincipal() instanceof Jwt) {
-            Jwt jwt = (Jwt) authentication.getPrincipal();
+        if (authentication != null && authentication.getPrincipal() instanceof Jwt jwt) {
 
-            String email = jwt.getClaimAsString("email");
-            String sessionId = jwt.getClaimAsString("sid"); // Keycloak Session ID
-            String ipAddress = request.getRemoteAddr();
+            String email     = jwt.getClaimAsString("email");
+            String sessionId = jwt.getClaimAsString("sid");
+            String ipAddress = getClientIp(request);
             String userAgent = request.getHeader("User-Agent");
 
             if (sessionId != null) {
-                // 1. BLOKIRANJE: Proveri u bazi da li je sesija opozvana
+                // Provera da li je sesija opozvana
                 boolean isRevoked = userSessionService.isSessionRevoked(sessionId);
 
                 if (isRevoked) {
-                    // Opozvana je! Brišemo auth kontekst
-                    SecurityContextHolder.clearContext();
+                    // Logujemo pokušaj pristupa sa opozvаnom sesijom
+                    auditLogger.logFailure(
+                            AuditEventType.SESSION_BLOCKED_REVOKED,
+                            email != null ? email : "UNKNOWN",
+                            ipAddress,
+                            "Blokiran pristup sa opozvаnom sesijom. SID=" + sessionId
+                                    + " | URI=" + request.getRequestURI()
+                    );
 
-                    // Vraćamo 401 Unauthorized da frontend zna da treba da uradi logout
+                    SecurityContextHolder.clearContext();
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     response.setContentType("application/json");
                     response.getWriter().write("{\"error\": \"Session revoked\", \"message\": \"Sesija je opozvana.\"}");
-
-                    // Prekidamo lanac - zahtev NE ide dalje ka kontroleru
                     return;
                 }
 
-                // 2. Ažuriranje vremena aktivnosti (ako nije blokirana)
+                // Azuriranje aktivnosti sesije
                 try {
                     if (email != null) {
                         userSessionService.trackUserSession(email, sessionId, ipAddress, userAgent, jwt);
                     }
                 } catch (Exception e) {
-                    System.err.println("Greska pri pracenju sesije: " + e.getMessage());
+                    // Ne prekidamo zahtev zbog greske u pracenju sesije,
+                    // ali je logujemo kao sistemsku gresku
+                    logger.error("Greska pri pracenju sesije: " + e.getMessage());
                 }
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
 }

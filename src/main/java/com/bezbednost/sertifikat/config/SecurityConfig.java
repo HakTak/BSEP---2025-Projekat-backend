@@ -22,34 +22,30 @@ import java.util.List;
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    // --- IZMENA 1: Injektujemo naš custom filter za sesije ---
     private final SessionTrackingFilter sessionTrackingFilter;
     private final MustChangePasswordFilter mustChangePasswordFilter;
+    private final RequestLoggingFilter requestLoggingFilter;
 
     public SecurityConfig(
             SessionTrackingFilter sessionTrackingFilter,
-            MustChangePasswordFilter mustChangePasswordFilter
+            MustChangePasswordFilter mustChangePasswordFilter,
+            RequestLoggingFilter requestLoggingFilter
     ) {
         this.sessionTrackingFilter = sessionTrackingFilter;
         this.mustChangePasswordFilter = mustChangePasswordFilter;
+        this.requestLoggingFilter = requestLoggingFilter;
     }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                // 1. CORS KONFIGURACIJA
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
-                // 2. CSRF
                 .csrf(AbstractHttpConfigurer::disable)
-
-                // 3. SESSION MANAGEMENT (Stateless)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
                 .authorizeHttpRequests(auth -> auth
-                        // Ovi endpointi moraju biti javni (bez tokena)
                         .requestMatchers(
-                                "/api/auth/login",            // <--- OVO TI JE FALILO!
+                                "/api/auth/login",
                                 "/api/auth/register",
                                 "/api/auth/activate",
                                 "/api/auth/forgot-password",
@@ -63,18 +59,16 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
-                // Konfiguracija za Keycloak (OAuth2 Resource Server)
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(
                         jwt -> jwt.jwtAuthenticationConverter(new KeycloakJwtRolesConverter())))
 
-                // --- IZMENA 2: Dodajemo naš filter u lanac ---
-                // Dodajemo ga NAKON BasicAuthenticationFilter-a.
-                // U ovom trenutku Spring je već proverio JWT token i popunio SecurityContext,
-                // tako da naš filter može da pročita podatke o korisniku.
-                .addFilterAfter(sessionTrackingFilter, BasicAuthenticationFilter.class)
+                // 1. RequestLoggingFilter – na vrhu, prvi se izvrsava, pre SessionTrackingFilter-a
+                .addFilterAfter(requestLoggingFilter, BasicAuthenticationFilter.class)
+                // 2. SessionTrackingFilter – posle RequestLoggingFilter-a
+                .addFilterAfter(sessionTrackingFilter, RequestLoggingFilter.class)
+                // 3. MustChangePasswordFilter – poslednji u nizu
                 .addFilterAfter(mustChangePasswordFilter, SessionTrackingFilter.class)
 
-                // 5. ISKLJUČIVANJE DEFAULT LOGIN FORMI
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable);
 
@@ -89,8 +83,6 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-
-        // Tvoj React frontend
         configuration.setAllowedOrigins(List.of(
                 "http://localhost:5173",
                 "https://localhost:5173",
