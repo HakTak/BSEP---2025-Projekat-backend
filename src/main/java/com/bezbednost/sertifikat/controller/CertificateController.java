@@ -113,7 +113,6 @@ public class CertificateController {
     }
 
     @GetMapping("/download/{serialNumber}")
-    @PreAuthorize("isAnonymous()")
     public ResponseEntity<?> downloadCertificate(@PathVariable String serialNumber) {
         try {
             byte[] certificateData = certificateService.downloadCertificateAsDER(serialNumber);

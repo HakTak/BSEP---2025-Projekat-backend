@@ -20,7 +20,7 @@ public class PasswordEntry {
 	
 	@Column(nullable = false)
 	private String email;
-	@Column(nullable = false)
+	@Column(columnDefinition = "TEXT", nullable = false)
 	private String encryptedPassword;
 	
 
