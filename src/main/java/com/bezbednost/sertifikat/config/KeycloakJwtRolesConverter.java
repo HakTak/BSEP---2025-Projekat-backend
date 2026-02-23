@@ -18,7 +18,6 @@ public class KeycloakJwtRolesConverter implements Converter<Jwt, AbstractAuthent
     public AbstractAuthenticationToken convert(Jwt jwt) {
         // 1. Čitamo claim "role" koji smo definisali u Keycloak maperu
         String roleClaim = jwt.getClaimAsString("role");
-
         // Ako nema role u tokenu, vraćamo praznu listu prava
         if (roleClaim == null || roleClaim.isEmpty()) {
             return new JwtAuthenticationToken(jwt, Collections.emptySet());

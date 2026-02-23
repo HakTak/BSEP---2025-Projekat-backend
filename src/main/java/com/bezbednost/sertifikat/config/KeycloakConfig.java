@@ -13,7 +13,7 @@ public class KeycloakConfig {
     public Keycloak keycloak() {
 
         System.out.println("Initializing Keycloak Admin Client...");
-
+        
         return KeycloakBuilder.builder()
                 .serverUrl("http://localhost:8080")
                 .realm("sertifikat")

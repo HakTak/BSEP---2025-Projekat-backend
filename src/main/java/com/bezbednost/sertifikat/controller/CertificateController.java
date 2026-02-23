@@ -113,7 +113,7 @@ public class CertificateController {
     }
 
     @GetMapping("/download/{serialNumber}")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("isAnonymous()")
     public ResponseEntity<?> downloadCertificate(@PathVariable String serialNumber) {
         try {
             byte[] certificateData = certificateService.downloadCertificateAsDER(serialNumber);
@@ -169,6 +169,18 @@ public class CertificateController {
      public ResponseEntity<?> getAllCA(){
     	 List<CertificateDetailsDTO> dtos =
     			 certificateService.getAllCA()
+    			 .stream()
+    			 .map(cert -> new CertificateDetailsDTO(cert
+    					 ))
+    			 .toList();
+    	 return new ResponseEntity<>(dtos, HttpStatus.OK);
+     }
+     
+     @GetMapping("/getAllEE")
+     @PreAuthorize("hasRole('USER')")
+     public ResponseEntity<?> getAllEE(){
+    	 List<CertificateDetailsDTO> dtos =
+    			 certificateService.getAllEE()
     			 .stream()
     			 .map(cert -> new CertificateDetailsDTO(cert
     					 ))
