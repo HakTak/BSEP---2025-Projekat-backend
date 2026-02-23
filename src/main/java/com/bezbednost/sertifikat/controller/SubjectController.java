@@ -17,15 +17,15 @@ public class SubjectController {
     private SubjectService subjectService;
 
     // GET: https://localhost:8443/api/subjects
-    @GetMapping
-    public List<Subject> getAll() {
-        return subjectService.getAllSubjects();
-    }
-
-    // POST: https://localhost:8443/api/subjects
-    @PostMapping
-    public ResponseEntity<Subject> create(@RequestBody SubjectDTO subjectDTO) {
-        Subject created = subjectService.createSubject(subjectDTO);
-        return ResponseEntity.ok(created);
-    }
+//    @GetMapping
+//    public List<Subject> getAll() {
+//        return subjectService.getAllSubjects();
+//    }
+//
+//    // POST: https://localhost:8443/api/subjects
+//    @PostMapping
+//    public ResponseEntity<Subject> create(@RequestBody SubjectDTO subjectDTO) {
+//        Subject created = subjectService.createSubject(subjectDTO);
+//        return ResponseEntity.ok(created);
+//    }
 }

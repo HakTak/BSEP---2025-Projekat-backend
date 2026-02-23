@@ -1,6 +1,8 @@
 package com.bezbednost.sertifikat.controller;
 
 import com.bezbednost.sertifikat.dto.UserSessionDTO;
+import com.bezbednost.sertifikat.service.AuditEventType;
+import com.bezbednost.sertifikat.service.AuditLogger;
 import com.bezbednost.sertifikat.service.UserSessionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -16,38 +18,66 @@ import java.util.List;
 public class UserSessionController {
 
     private final UserSessionService userSessionService;
+    private final AuditLogger auditLogger;
 
-    public UserSessionController(UserSessionService userSessionService) {
+    public UserSessionController(UserSessionService userSessionService, AuditLogger auditLogger) {
         this.userSessionService = userSessionService;
+        this.auditLogger = auditLogger;
     }
 
     @GetMapping("/sessions")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<UserSessionDTO>> getActiveSessions(@AuthenticationPrincipal Jwt jwt, HttpServletRequest request) {
-        // Izvlačimo podatke iz JWT tokena
-        String email = jwt.getClaimAsString("email"); // ili "preferred_username" zavisno od Keycloaka
-        String sessionId = jwt.getClaimAsString("sid"); // Keycloak Session ID
+    public ResponseEntity<List<UserSessionDTO>> getActiveSessions(
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
 
-        // Opciono: Ažuriraj trenutnu sesiju u bazi da znamo da je korisnik živ
-        String ipAddress = request.getRemoteAddr();
+        String email     = jwt.getClaimAsString("email");
+        String sessionId = jwt.getClaimAsString("sid");
+        String ipAddress = getClientIp(request);
         String userAgent = request.getHeader("User-Agent");
+
         userSessionService.trackUserSession(email, sessionId, ipAddress, userAgent, jwt);
 
-        // Vrati sve sesije
         return ResponseEntity.ok(userSessionService.getUserSessions(email));
     }
 
     @PostMapping("/sessions/revoke/{sessionId}")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<String> revokeSession(@PathVariable String sessionId) {
+    public ResponseEntity<String> revokeSession(
+            @PathVariable String sessionId,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+
+        String email = jwt.getClaimAsString("email");
+        String ip    = getClientIp(request);
+
         userSessionService.revokeSession(sessionId);
+        auditLogger.logSuccess(AuditEventType.SESSION_REVOKED, email, ip,
+                "Korisnik opozao sesiju. SID=" + sessionId);
+
         return ResponseEntity.ok("Sesija uspešno opozvana i zabeležena u bazi.");
     }
 
     @PutMapping("/logout")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<String> logout() {
+    public ResponseEntity<String> logout(
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+
+        String email     = jwt.getClaimAsString("email");
+        String sessionId = jwt.getClaimAsString("sid");
+        String ip        = getClientIp(request);
+
         userSessionService.revokeActiveSession();
+        auditLogger.logSuccess(AuditEventType.USER_LOGOUT, email, ip,
+                "Korisnik se odjavio. SID=" + sessionId);
+
         return ResponseEntity.ok("Sesija uspešno opozvana i zabeležena u bazi.");
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
 }
