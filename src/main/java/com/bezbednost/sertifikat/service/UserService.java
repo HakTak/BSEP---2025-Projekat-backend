@@ -309,6 +309,9 @@ public class UserService {
         // Označavanje tokena kao korišten
         resetToken.setUsed(true);
         resetToken.setUsedAt(LocalDateTime.now());
+
+        keycloakService.updatePassword(user.getEmail(), request.getNewPassword());
+
         passwordResetTokenRepository.save(resetToken);
     }
     
