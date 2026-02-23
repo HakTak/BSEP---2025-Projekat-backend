@@ -241,7 +241,7 @@ public class UserService {
 
         // 7. SET mustChangePassword = false u Keycloak-u
         keycloakService.updateUserAttribute(email, "mustChangePassword", "false");
-        
+
     }
 
     
