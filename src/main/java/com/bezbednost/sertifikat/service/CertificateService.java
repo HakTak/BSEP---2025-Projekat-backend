@@ -2,6 +2,7 @@ package com.bezbednost.sertifikat.service;
 
 import com.bezbednost.sertifikat.dto.CertificateIssueDTO;
 import com.bezbednost.sertifikat.dto.CsrDTO;
+import com.bezbednost.sertifikat.dto.CsrViewDTO;
 import com.bezbednost.sertifikat.entity.*;
 import com.bezbednost.sertifikat.exception.CertificateValidationException;
 import com.bezbednost.sertifikat.exception.ResourceNotFoundException;
@@ -62,6 +63,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -543,6 +545,7 @@ public class CertificateService {
         certEntity.setValidTo(cert.getNotAfter().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
         certEntity.setType(type);
         certEntity.setOwner(owner);
+        certEntity.setPublicKey(Base64.getEncoder().encodeToString(cert.getPublicKey().getEncoded()));
         certEntity.setKeystore(keystore);
         certEntity.setIssuerSerialNumber(issuerSerial);
         return certificateRepository.save(certEntity);
@@ -835,10 +838,31 @@ public class CertificateService {
 	}
 	
 	public List<Certificate> getAllCA(){
-		return certificateRepository.findAllCA();
+		return certificateRepository.findAllByType(CertificateType.INTERMEDIATE);
 	}
 	
-	public List<Csr> getAllCACsr(Long userId){
-		return csrRepository.findCsrsBySigningCaOwner(userId);
+	public List<CsrViewDTO> getAllCACsr(Long userId) {
+	    return csrRepository.findCsrsBySigningCaOwner(userId).stream()
+	        .map(csr -> CsrViewDTO.builder()
+	        	.id(csr.getId())
+	            .commonName(csr.getCommonName())
+	            .organization(csr.getOrganization())
+	            .organizationalUnit(csr.getOrganizationalUnit())
+	            .country(csr.getCountry())
+	            .email(csr.getEmail())
+	            .publicKey(csr.getPublicKey())
+	            .expiresAt(csr.getExpiresAt())
+	            .issuedAt(csr.getIssuedAt())
+	            .issuerSerialNumber(csr.getIssuerSerialNumber())
+	            .status(csr.getStatus())
+	            .build())
+	        .collect(Collectors.toList());
+	}
+	
+	public List<Certificate> getAllEE() {
+	    return certificateRepository.findAllByType(CertificateType.END_ENTITY)
+	        .stream()
+	        .filter(cert ->  cert.getOwner().getRole() == UserRole.USER)
+	        .collect(Collectors.toList());
 	}
 }

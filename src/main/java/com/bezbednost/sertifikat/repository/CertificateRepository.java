@@ -7,13 +7,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 import com.bezbednost.sertifikat.model.Certificate;
+import com.bezbednost.sertifikat.model.CertificateType;
 
 
 
 public interface CertificateRepository extends JpaRepository<Certificate, Long> {
     Optional<Certificate> findBySerialNumber(String serialNumber);
     List<Certificate> findByOwnerId(Long id);
-    @Query("SELECT c FROM Certificate c WHERE c.type = CertificateType.INTERMEDIATE")
-    List<Certificate> findAllCA();
+    List<Certificate> findAllByType(CertificateType type);
 }
 
