@@ -3,7 +3,7 @@
 > Academic project for *Security in Electronic Commerce Systems*, 2025
 
 <p align="left">
-  <a href="https://github.com/HakTak/sentinel-pki-password-vault-frontend"><img src="https://img.shields.io/badge/Repository-Frontend-7A8C5E?style=for-the-badge&logo=github" alt="Frontend Repo"/></a>
+  <a href="https://github.com/HakTak/pki-password-vault-frontend"><img src="https://img.shields.io/badge/Repository-Frontend-7A8C5E?style=for-the-badge&logo=github" alt="Frontend Repo"/></a>
 </p>
 
 ---
